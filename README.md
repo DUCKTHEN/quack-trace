@@ -27,6 +27,8 @@ Quack Trace runs entirely in the browser as a static HTML/CSS/JavaScript app.
 
 GitHub Pages hosts the app files, but it does not receive the images you load into the tool.
 
+See `PRIVACY.md` for the short privacy note.
+
 ## Try Locally
 
 From the repository parent folder:
@@ -66,3 +68,5 @@ The duck sound effect is a third-party asset from Pixabay and is documented sepa
 ## Status
 
 Beta. The app is usable, but the UI and export workflows are still changing.
+
+See `ROADMAP.md` for known improvements and export notes.

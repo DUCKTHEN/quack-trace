@@ -18,10 +18,9 @@ Recommended settings:
 
 ## 2. Push Local Git
 
-From this folder:
+From the local repository folder:
 
 ```powershell
-cd C:\Users\cltme\Desktop\codex-project\quack-trace
 git push -u origin main
 ```
 
