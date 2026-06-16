@@ -4,6 +4,12 @@ First public beta release of Quack Trace.
 
 Quack Trace is a browser-based pattern tracing tool for collecting real-size coordinates from images. It is designed for sewing-pattern drafting tests, image tracing, coordinate capture, and export experiments.
 
+## 日本語
+
+Quack Trace v0.1.0-beta は、画像から実寸座標を取るためのブラウザ製図トレースツールの最初の公開ベータ版です。
+
+洋裁パターンの検証、画像トレース、座標取得、各種書き出し実験を目的にしています。画像を読み込み、スケールを設定し、点・線・カーブ・閉じた図形を作成できます。
+
 ## Highlights
 
 - Static browser app: no backend server required.
@@ -49,4 +55,3 @@ https://duckthen.github.io/quack-trace/
 git tag v0.1.0-beta
 git push origin v0.1.0-beta
 ```
-
