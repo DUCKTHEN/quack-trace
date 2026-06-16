@@ -70,3 +70,5 @@ The duck sound effect is a third-party asset from Pixabay and is documented sepa
 Beta. The app is usable, but the UI and export workflows are still changing.
 
 See `ROADMAP.md` for known improvements and export notes.
+
+Initial public beta notes are drafted in `RELEASE_NOTES.md`.

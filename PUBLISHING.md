@@ -58,7 +58,18 @@ https://duckthen.github.io/quack-trace/
 - Confirm `assets/sounds/README.md` is present for the Pixabay sound note.
 - Confirm no local screenshots, Obsidian notes, personal paths, or test archives were committed.
 
-## 5. Known Beta Notes
+## 5. Create A Beta Release
+
+Suggested tag:
+
+```powershell
+git tag v0.1.0-beta
+git push origin v0.1.0-beta
+```
+
+Then create a GitHub Release from that tag and paste the contents of `RELEASE_NOTES.md`.
+
+## 6. Known Beta Notes
 
 - Mobile layout still needs polish.
 - Export workflows are useful but still experimental.
