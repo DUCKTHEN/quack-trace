@@ -204,8 +204,6 @@ const I18N = {
     "action.details": "こまかい調整",
     "export.importJson": "JSON読込",
     "export.importJsonTitle": "Quack TraceのJSON保存から作業状態を読み込みます",
-    "export.importDxf": "DXF読込",
-    "export.importDxfTitle": "CADで作成したDXFの線・ポリラインを読み込みます。DXF単位はmmとして扱います",
     "export.copyJson": "JSONコピー",
     "export.saveJson": "JSON保存",
     "export.saveCsv": "CSV保存",
@@ -345,8 +343,6 @@ const I18N = {
     "action.details": "Fine controls",
     "export.importJson": "Import JSON",
     "export.importJsonTitle": "Import a saved Quack Trace JSON work state",
-    "export.importDxf": "Import DXF",
-    "export.importDxfTitle": "Import lines and polylines from a CAD DXF file. DXF units are treated as millimeters.",
     "export.copyJson": "Copy JSON",
     "export.saveJson": "Save JSON",
     "export.saveCsv": "Save CSV",
@@ -795,24 +791,11 @@ importJsonInput.accept = ".json,application/json";
 importJsonInput.hidden = true;
 document.body.appendChild(importJsonInput);
 
-const importDxfInput = document.createElement("input");
-importDxfInput.id = "importDxfInput";
-importDxfInput.type = "file";
-importDxfInput.accept = ".dxf,application/dxf,text/plain";
-importDxfInput.hidden = true;
-document.body.appendChild(importDxfInput);
-
 const importJsonButton = document.createElement("button");
 importJsonButton.id = "importJsonButton";
 importJsonButton.type = "button";
 importJsonButton.textContent = "JSON読込";
 importJsonButton.title = "Quack TraceのJSON保存から作業状態を読み込みます";
-
-const importDxfButton = document.createElement("button");
-importDxfButton.id = "importDxfButton";
-importDxfButton.type = "button";
-importDxfButton.textContent = "DXF読込";
-importDxfButton.title = "CADで作成したDXFの線・ポリラインを読み込みます";
 
 const svgLabelsLabel = document.createElement("label");
 svgLabelsLabel.className = "switch-row export-option-row";
@@ -864,7 +847,6 @@ appendExportCard("記録", [
   els.downloadCsv,
 ]);
 appendExportCard("図面", [
-  importDxfButton,
   els.downloadSvg,
   downloadDxfButton,
   printPdfButton,
@@ -996,7 +978,6 @@ function applyLanguage() {
   }
 
   setButton(importJsonButton, "export.importJson", "export.importJsonTitle");
-  setButton(importDxfButton, "export.importDxf", "export.importDxfTitle");
   setButton(els.copyJson, "export.copyJson");
   setButton(els.downloadJson, "export.saveJson");
   setButton(els.downloadCsv, "export.saveCsv");
@@ -5323,335 +5304,6 @@ function importQuackTraceJson(data) {
     : `JSONを読み込みました。${importedPoints.length}点 / ${importedFaces.length}面を復元しました。`);
 }
 
-function parseDxfPairs(text) {
-  const lines = String(text).replace(/^\uFEFF/, "").split(/\r?\n/);
-  const pairs = [];
-  for (let index = 0; index < lines.length - 1; index += 2) {
-    const code = Number(String(lines[index]).trim());
-    if (!Number.isFinite(code)) continue;
-    pairs.push({ code, value: String(lines[index + 1]).trim() });
-  }
-  return pairs;
-}
-
-function collectDxfEntityPairs(pairs, startIndex) {
-  const entityPairs = [];
-  let index = startIndex + 1;
-  while (index < pairs.length && pairs[index].code !== 0) {
-    entityPairs.push(pairs[index]);
-    index += 1;
-  }
-  return { pairs: entityPairs, nextIndex: index - 1 };
-}
-
-function parseDxfPolylineEntity(pairs, startIndex) {
-  const header = [];
-  const vertices = [];
-  let currentVertex = null;
-  let index = startIndex + 1;
-
-  for (; index < pairs.length; index += 1) {
-    const pair = pairs[index];
-    if (pair.code === 0) {
-      const marker = pair.value.toUpperCase();
-      if (marker === "VERTEX") {
-        if (currentVertex) vertices.push(currentVertex);
-        currentVertex = [];
-        continue;
-      }
-      if (marker === "SEQEND") {
-        if (currentVertex) vertices.push(currentVertex);
-        break;
-      }
-      if (currentVertex) vertices.push(currentVertex);
-      index -= 1;
-      break;
-    }
-    if (currentVertex) currentVertex.push(pair);
-    else header.push(pair);
-  }
-
-  return { entity: { type: "POLYLINE", pairs: header, vertices }, nextIndex: index };
-}
-
-function parseDxfEntities(text) {
-  const pairs = parseDxfPairs(text);
-  const entities = [];
-  let inEntities = false;
-
-  for (let index = 0; index < pairs.length; index += 1) {
-    const pair = pairs[index];
-    if (pair.code !== 0) continue;
-
-    const marker = pair.value.toUpperCase();
-    if (marker === "SECTION") {
-      inEntities = pairs[index + 1]?.code === 2 && pairs[index + 1].value.toUpperCase() === "ENTITIES";
-      continue;
-    }
-    if (marker === "ENDSEC") {
-      inEntities = false;
-      continue;
-    }
-    if (!inEntities) continue;
-
-    if (marker === "POLYLINE") {
-      const parsed = parseDxfPolylineEntity(pairs, index);
-      entities.push(parsed.entity);
-      index = parsed.nextIndex;
-      continue;
-    }
-
-    if (["LINE", "LWPOLYLINE", "CIRCLE", "ARC", "SPLINE"].includes(marker)) {
-      const collected = collectDxfEntityPairs(pairs, index);
-      entities.push({ type: marker, pairs: collected.pairs });
-      index = collected.nextIndex;
-    }
-  }
-
-  return entities;
-}
-
-function dxfNumber(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
-}
-
-function dxfFirstNumber(pairs, code) {
-  const pair = pairs.find((candidate) => candidate.code === code);
-  return pair ? dxfNumber(pair.value) : null;
-}
-
-function dxfFlag(pairs, code) {
-  return dxfFirstNumber(pairs, code) || 0;
-}
-
-function dxfPointSequence(pairs, xCode = 10, yCode = 20) {
-  const points = [];
-  let current = null;
-  pairs.forEach((pair) => {
-    if (pair.code === xCode) {
-      if (current && Number.isFinite(current.x) && Number.isFinite(current.y)) points.push(current);
-      current = { x: dxfNumber(pair.value), y: null, bulge: 0 };
-    } else if (pair.code === yCode && current) {
-      current.y = dxfNumber(pair.value);
-    } else if (pair.code === 42 && current) {
-      current.bulge = dxfNumber(pair.value) || 0;
-    }
-  });
-  if (current && Number.isFinite(current.x) && Number.isFinite(current.y)) points.push(current);
-  return points;
-}
-
-function sameDxfPoint(a, b, tolerance = 0.0001) {
-  return Boolean(a && b && Math.hypot(a.x - b.x, a.y - b.y) <= tolerance);
-}
-
-function sampleDxfBulgeSegment(from, to, bulge) {
-  if (!Number.isFinite(bulge) || Math.abs(bulge) < 0.000001) return [to];
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  const chord = Math.hypot(dx, dy);
-  if (chord === 0) return [];
-
-  const theta = 4 * Math.atan(bulge);
-  const radius = chord / (2 * Math.sin(Math.abs(theta) / 2));
-  const ux = dx / chord;
-  const uy = dy / chord;
-  const normal = { x: -uy, y: ux };
-  const midpoint = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
-  const centerDistance = radius * Math.cos(theta / 2) * Math.sign(bulge);
-  const center = {
-    x: midpoint.x + normal.x * centerDistance,
-    y: midpoint.y + normal.y * centerDistance,
-  };
-  const startAngle = Math.atan2(from.y - center.y, from.x - center.x);
-  let endAngle = Math.atan2(to.y - center.y, to.x - center.x);
-  let delta = endAngle - startAngle;
-  if (bulge > 0 && delta <= 0) delta += Math.PI * 2;
-  if (bulge < 0 && delta >= 0) delta -= Math.PI * 2;
-  endAngle = startAngle + delta;
-
-  const steps = Math.max(4, Math.ceil(Math.abs(delta) / (Math.PI / 18)));
-  const samples = [];
-  for (let step = 1; step <= steps; step += 1) {
-    const angle = startAngle + (endAngle - startAngle) * (step / steps);
-    samples.push({
-      x: center.x + Math.cos(angle) * Math.abs(radius),
-      y: center.y + Math.sin(angle) * Math.abs(radius),
-    });
-  }
-  return samples;
-}
-
-function dxfPolylinePath(vertices, closed) {
-  if (vertices.length < 2) return [];
-  const points = [{ x: vertices[0].x, y: vertices[0].y }];
-  const segmentCount = closed ? vertices.length : vertices.length - 1;
-  for (let index = 0; index < segmentCount; index += 1) {
-    const from = vertices[index];
-    const to = vertices[(index + 1) % vertices.length];
-    points.push(...sampleDxfBulgeSegment(from, to, from.bulge || 0));
-  }
-  if (closed && sameDxfPoint(points[0], points[points.length - 1])) points.pop();
-  return points;
-}
-
-function sampleDxfArc(center, radius, startDegrees, endDegrees) {
-  if (!center || !Number.isFinite(radius) || radius <= 0) return [];
-  let start = (startDegrees * Math.PI) / 180;
-  let end = (endDegrees * Math.PI) / 180;
-  while (end < start) end += Math.PI * 2;
-  const steps = Math.max(4, Math.ceil((end - start) / (Math.PI / 18)));
-  const points = [];
-  for (let step = 0; step <= steps; step += 1) {
-    const angle = start + (end - start) * (step / steps);
-    points.push({ x: center.x + Math.cos(angle) * radius, y: center.y + Math.sin(angle) * radius });
-  }
-  return points;
-}
-
-function dxfEntityToPath(entity) {
-  const pairs = entity.pairs || [];
-  if (entity.type === "LINE") {
-    const x1 = dxfFirstNumber(pairs, 10);
-    const y1 = dxfFirstNumber(pairs, 20);
-    const x2 = dxfFirstNumber(pairs, 11);
-    const y2 = dxfFirstNumber(pairs, 21);
-    if ([x1, y1, x2, y2].some((value) => value === null)) return null;
-    return { points: [{ x: x1, y: y1 }, { x: x2, y: y2 }], closed: false };
-  }
-
-  if (entity.type === "LWPOLYLINE") {
-    const vertices = dxfPointSequence(pairs);
-    const closed = Boolean(dxfFlag(pairs, 70) & 1) || sameDxfPoint(vertices[0], vertices[vertices.length - 1]);
-    return { points: dxfPolylinePath(vertices, closed), closed };
-  }
-
-  if (entity.type === "POLYLINE") {
-    const vertices = (entity.vertices || []).map((vertexPairs) => dxfPointSequence(vertexPairs)[0]).filter(Boolean);
-    const closed = Boolean(dxfFlag(pairs, 70) & 1) || sameDxfPoint(vertices[0], vertices[vertices.length - 1]);
-    return { points: dxfPolylinePath(vertices, closed), closed };
-  }
-
-  if (entity.type === "CIRCLE" || entity.type === "ARC") {
-    const center = { x: dxfFirstNumber(pairs, 10), y: dxfFirstNumber(pairs, 20) };
-    const radius = dxfFirstNumber(pairs, 40);
-    if (center.x === null || center.y === null || radius === null) return null;
-    if (entity.type === "CIRCLE") {
-      return { points: sampleDxfArc(center, radius, 0, 360).slice(0, -1), closed: true };
-    }
-    const start = dxfFirstNumber(pairs, 50) ?? 0;
-    const end = dxfFirstNumber(pairs, 51) ?? 0;
-    return { points: sampleDxfArc(center, radius, start, end), closed: false };
-  }
-
-  if (entity.type === "SPLINE") {
-    const fitPoints = dxfPointSequence(pairs, 11, 21);
-    const controlPoints = dxfPointSequence(pairs, 10, 20);
-    const points = fitPoints.length >= 2 ? fitPoints : controlPoints;
-    return { points, closed: Boolean(dxfFlag(pairs, 70) & 1) };
-  }
-
-  return null;
-}
-
-function createTransparentWorkspace(width, height) {
-  const grid = document.createElement("canvas");
-  grid.width = Math.max(320, Math.ceil(width));
-  grid.height = Math.max(240, Math.ceil(height));
-  return grid;
-}
-
-function importDxfText(text, fileName = "imported-dxf") {
-  const paths = parseDxfEntities(text)
-    .map(dxfEntityToPath)
-    .filter((path) => path && path.points.length >= 2);
-  if (paths.length === 0) {
-    throw new Error("読み込めるDXF図形がありません。LINE / LWPOLYLINE / POLYLINE / ARC / CIRCLE を確認してください。");
-  }
-
-  const allPoints = paths.flatMap((path) => path.points);
-  const minX = Math.min(...allPoints.map((point) => point.x));
-  const maxX = Math.max(...allPoints.map((point) => point.x));
-  const minY = Math.min(...allPoints.map((point) => point.y));
-  const maxY = Math.max(...allPoints.map((point) => point.y));
-  const margin = 80;
-  const origin = { x: margin - minX, y: margin + maxY };
-  const cmPerPixel = 0.1;
-  const pointMap = new Map();
-  const importedPoints = [];
-  const importedEdges = [];
-  const importedFaces = [];
-
-  function imagePointFromDxf(point) {
-    return { x: origin.x + point.x, y: origin.y - point.y };
-  }
-
-  function addImportedPoint(dxfPoint) {
-    const imagePoint = imagePointFromDxf(dxfPoint);
-    const key = `${imagePoint.x.toFixed(4)},${imagePoint.y.toFixed(4)}`;
-    if (pointMap.has(key)) return pointMap.get(key);
-    const point = {
-      id: crypto.randomUUID(),
-      name: `P${importedPoints.length + 1}`,
-      x: imagePoint.x,
-      y: imagePoint.y,
-    };
-    importedPoints.push(point);
-    pointMap.set(key, point);
-    return point;
-  }
-
-  paths.forEach((path) => {
-    let pathPoints = [...path.points];
-    if (path.closed && sameDxfPoint(pathPoints[0], pathPoints[pathPoints.length - 1])) pathPoints = pathPoints.slice(0, -1);
-    const ids = pathPoints.map((point) => addImportedPoint(point).id);
-    ids.forEach((id, index) => {
-      const nextId = ids[index + 1];
-      if (nextId && id !== nextId) importedEdges.push([id, nextId]);
-    });
-    if (path.closed && ids.length >= 3) {
-      if (ids[ids.length - 1] !== ids[0]) importedEdges.push([ids[ids.length - 1], ids[0]]);
-      importedFaces.push(ids);
-    }
-  });
-
-  state.imageName = fileName.replace(/\.[^.]+$/, "") || "imported-dxf";
-  state.image = createTransparentWorkspace((maxX - minX) + margin * 2, (maxY - minY) + margin * 2);
-  state.points = importedPoints;
-  state.edges = importedEdges;
-  state.faces = importedFaces;
-  state.currentPathLast = null;
-  state.currentPathIds = [];
-  state.selected.clear();
-  clearSelectedEdges();
-  state.selectedFaceIndex = null;
-  state.calibrationClicks = [];
-  state.cmPerPixel = cmPerPixel;
-  state.origin = origin;
-  state.yUp = true;
-  state.sourceOffset = { x: 0, y: 0 };
-  state.sourceScale = 1;
-  state.sketchStrokes = [];
-  state.sketchCircles = [];
-  state.fitViewBefore = null;
-  state.lastPointClick = null;
-  state.imageOpacity = 0;
-  opacityInput.value = "0";
-  setShapeOpacity(DEFAULT_SHAPE_OPACITY);
-  els.unit.value = "mm";
-  els.knownLengthUnit.textContent = "mm";
-  arrowMoveUnit.textContent = "mm";
-  els.knownLength.value = "100";
-  els.pointName.value = nextImportedPointName(importedPoints);
-  clearUndoHistory();
-  updateAll();
-  fitImage();
-  setStatus(state.language === "en"
-    ? `Imported DXF as millimeters. ${importedPoints.length} points / ${importedEdges.length} lines / ${importedFaces.length} faces.`
-    : `DXFをmmとして読み込みました。${importedPoints.length}点 / ${importedEdges.length}線 / ${importedFaces.length}面です。`);
-}
-
 function svgText() {
   const unit = els.unit.value;
   const fromMm = (mm) => unit === "cm" ? mm / 10 : mm;
@@ -6557,10 +6209,6 @@ importJsonButton.addEventListener("click", () => {
   importJsonInput.value = "";
   importJsonInput.click();
 });
-importDxfButton.addEventListener("click", () => {
-  importDxfInput.value = "";
-  importDxfInput.click();
-});
 importJsonInput.addEventListener("change", (event) => {
   const file = event.target.files?.[0];
   if (!file) return;
@@ -6573,20 +6221,6 @@ importJsonInput.addEventListener("change", (event) => {
     }
   };
   reader.onerror = () => setStatus("JSONファイルを読み込めませんでした。");
-  reader.readAsText(file);
-});
-importDxfInput.addEventListener("change", (event) => {
-  const file = event.target.files?.[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    try {
-      importDxfText(String(reader.result), file.name);
-    } catch (error) {
-      setStatus(`DXF読込に失敗しました: ${error.message}`);
-    }
-  };
-  reader.onerror = () => setStatus("DXFファイルを読み込めませんでした。");
   reader.readAsText(file);
 });
 els.downloadJson.addEventListener("click", () => {
