@@ -1,41 +1,62 @@
 # Quack Trace
 
-Quack Trace is a browser-based pattern tracing tool for collecting real-size coordinates from images.
+Quack Trace is a browser-based pattern tracing tool for making garment shapes from images, grid paper, or quick sketches.
 
-It is currently a beta tool for drafting and testing sewing-pattern workflows. Load an image, set a real-world scale, place points along outlines, bend edges into curves, close shapes, and export the traced data.
+Illustrator, CLO 3D, Marvelous Designer, apparel CAD tools, PDFs, and hand-drawn references are all useful, but moving pattern ideas back and forth between them can get awkward. Quack Trace is a small practical experiment: a tool for shaping clothing patterns more directly, visually, and playfully.
 
-## 日本語概要
+https://duckthen.github.io/quack-trace/
 
-Quack Trace は、画像を下敷きにして実寸座標を取るためのブラウザ製図トレースツールです。
+## 何ができる？
 
-画像を読み込み、既知の長さからスケールを設定し、輪郭上に点を置いて線やカーブを作れます。閉じた図形、JSON保存、SVG/CSV/DXF/Python系の実験的な書き出しにも対応しています。
+- 画像や方眼紙を下敷きにして、実寸スケールの点・線・カーブを作れます。
+- 閉じた図形として服のパーツ形状を作れます。
+- 円、カーブ、下書きペン、下書き円を使って、感覚的に形を探れます。
+- JSONで作業途中を保存・再読み込みできます。
+- SVG / CSV / DXF を書き出せます。
+- MD/CLO向け Python、Blender向け Python を書き出せます。
+- 実寸確認用に印刷 / PDF保存できます。
+- 日本語 / English を切り替えられます。
 
-現在はベータ版です。基本的なトレース作業には使えますが、UIや書き出し機能は今後も調整していきます。
+## 遊んでほしいところ
 
-## Features
+「面積を保つ」モードをONにすると、面積をなるべく変えずに形を動かせます。
 
-- Image underlay loading in the browser
-- Built-in grid paper for quick real-size tracing
-- Scale calibration from a known length
-- Point, line, curve, and closed-shape editing
-- Undo / redo
-- Keyboard nudging with configurable distance
-- Grid snap toggle
-- JSON import / export for work-in-progress saves
-- SVG, CSV, DXF, MD/CLO Python, and Blender Python export experiments
-- Japanese / English UI toggle
+服のパーツは、ちょっと動かしただけで印象が変わります。面積は変えずに輪郭だけ変えると、形の実験がしやすくて面白いです。こっそり作った機能ですが、ぜひ触ってみてください。
 
-## 主な機能
+## 出力について
 
-- ブラウザ内で画像を下敷きとして読み込み
-- 方眼紙表示とグリッドスナップ
-- 既知の長さによるスケール設定
-- 点、線、カーブ、閉じた図形の編集
-- Undo / Redo
-- 方向キーによる指定距離移動
-- 作業途中保存用の JSON 読み込み / 書き出し
-- SVG、CSV、DXF、MD/CLO Python、Blender Python の実験的な書き出し
-- 日本語 / 英語 UI 切り替え
+作った図は、用途に合わせていくつかの形式に出せます。
+
+- `JSON`: Quack Traceで作業を続けるための保存
+- `SVG`: Illustratorなどで確認・編集
+- `DXF`: CAD系ツールでの確認用
+- `MD/CLO py`: Marvelous Designer / CLO 3D に点や線を作るためのPython出力
+- `Blender py`: Blenderで形を確認するためのPython出力
+- `印刷 / PDF`: 実寸の黒線図として印刷・PDF保存
+
+出力まわりはまだ実験中です。ツールごとの読み込み差があるので、まずは小さな図形で試すのがおすすめです。
+
+## 大事な注意
+
+タイトル横のイタズラアヒルをクリックすると、アヒルが鳴いて、作図中の点・線・面がリセットされます。
+
+作業中はこまめに `JSON保存` してください。アヒルはかわいいですが、油断すると消します。
+
+## ローカルで試す
+
+リポジトリの親フォルダでサーバーを起動します。
+
+```powershell
+python -m http.server 8790 --bind 127.0.0.1
+```
+
+ブラウザで開きます。
+
+```text
+http://127.0.0.1:8790/quack-trace/
+```
+
+`index.html` を直接開いても多くの機能は動きますが、GitHub Pagesに近い状態で見るならローカルサーバーがおすすめです。
 
 ## Privacy
 
@@ -49,71 +70,11 @@ GitHub Pages hosts the app files, but it does not receive the images you load in
 
 See `PRIVACY.md` for the short privacy note.
 
-## プライバシー
-
-Quack Trace は静的な HTML/CSS/JavaScript アプリとしてブラウザ内で動きます。
-
-- 読み込んだ画像はローカルのブラウザセッション内に残ります。
-- アプリは画像、JSON、トレース座標をサーバーへアップロードしません。
-- 書き出しファイルはブラウザ上でローカルに作成されます。
-
-GitHub Pages はアプリ本体を配信しますが、ユーザーが読み込んだ画像を受け取りません。
-
-## Try Locally
-
-From the repository parent folder:
-
-```powershell
-python -m http.server 8790 --bind 127.0.0.1
-```
-
-Open:
-
-```text
-http://127.0.0.1:8790/quack-trace/
-```
-
-You can also open `index.html` directly in a browser for most workflows, but using a local server is closer to the GitHub Pages environment.
-
-## ローカルで試す
-
-リポジトリの親フォルダから:
-
-```powershell
-python -m http.server 8790 --bind 127.0.0.1
-```
-
-ブラウザで開きます:
-
-```text
-http://127.0.0.1:8790/quack-trace/
-```
-
-## GitHub Pages
-
-This app is designed to be published from the repository root with GitHub Pages:
-
-1. Push this folder to a GitHub repository, for example `DUCKTHEN/quack-trace`.
-2. In GitHub, open `Settings > Pages`.
-3. Set `Build and deployment` to `Deploy from a branch`.
-4. Select the `main` branch and `/ (root)`.
-5. The public app URL will be similar to:
-
-```text
-https://duckthen.github.io/quack-trace/
-```
-
-## Asset Notes
+## Assets
 
 The source code is licensed under the MIT License.
 
 The duck sound effect is a third-party asset from Pixabay and is documented separately in `assets/sounds/README.md`. Do not redistribute or sell the sound as a standalone asset.
-
-## ライセンスと素材
-
-ソースコードは MIT License です。
-
-アヒルの効果音は Pixabay 由来の第三者素材で、詳細は `assets/sounds/README.md` に記録しています。音声素材単体として再配布・販売しないでください。
 
 ## Status
 
@@ -122,7 +83,3 @@ Beta. The app is usable, but the UI and export workflows are still changing.
 See `ROADMAP.md` for known improvements and export notes.
 
 Initial public beta notes are drafted in `RELEASE_NOTES.md`.
-
-## 開発状況
-
-現在はベータ版です。基本機能は動作しますが、スマホ表示、図形編集、各種エクスポートは今後も改善予定です。

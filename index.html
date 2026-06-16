@@ -4,15 +4,15 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Quack Trace</title>
-    <link rel="icon" type="image/png" href="./assets/quack-trace-icon.png" />
-    <link rel="stylesheet" href="./styles.css?v=20260616-grid-paper-snap" />
+    <link rel="icon" type="image/png" href="./assets/quack-trace-icon.png?v=20260616-small-duck" />
+    <link rel="stylesheet" href="./styles.css?v=20260617-remove-pixel-font" />
   </head>
   <body>
     <main class="app">
       <header class="toolbar">
         <div class="brand">
           <button class="brand-sound-button" id="brandSoundButton" type="button" aria-label="Play duck quack">
-            <img class="brand-mark" src="./assets/quack-trace-icon.png" alt="" aria-hidden="true" />
+            <img class="brand-mark" src="./assets/quack-trace-icon.png?v=20260616-small-duck" alt="" aria-hidden="true" />
           </button>
           <div>
             <h1>Quack Trace</h1>
@@ -26,7 +26,7 @@
           </label>
           <button id="sampleButton" type="button" data-i18n="top.sample">Sample</button>
           <button id="fitButton" type="button" title="Fit view">⛶</button>
-          <button id="languageButton" type="button" title="Switch language">English</button>
+          <button id="languageButton" type="button" title="Switch language">日本語</button>
         </div>
       </header>
 
@@ -90,7 +90,7 @@
 
         <section class="canvas-panel">
           <div class="coach-bubble" id="coachBubble" aria-live="polite">
-            <img src="./assets/quack-trace-icon.png" alt="" aria-hidden="true" />
+            <img src="./assets/quack-trace-icon.png?v=20260616-small-duck" alt="" aria-hidden="true" />
             <p id="coachText" data-i18n="coach.start">Load an image, grid paper, or sample shape to begin.</p>
           </div>
           <canvas id="traceCanvas" width="1200" height="800"></canvas>
@@ -107,6 +107,7 @@
             <div class="loupe-footer" id="loupeCoords">x -- / y --</div>
           </div>
           <div class="canvas-status" id="canvasStatus" data-i18n="status.loadImage">Load an image or show a sample shape.</div>
+          <a class="app-credit" href="https://github.com/DUCKTHEN/quack-trace" target="_blank" rel="noopener noreferrer">Created by DUCKTHEN</a>
         </section>
 
         <aside class="side-panel right-panel">
@@ -132,6 +133,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=20260616-grid-paper-snap"></script>
+    <script src="./app.js?v=20260617-selected-point-group-drag"></script>
   </body>
 </html>

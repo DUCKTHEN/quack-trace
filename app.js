@@ -3,15 +3,20 @@ const ctx = canvas.getContext("2d");
 const canvasPanel = canvas.closest(".canvas-panel");
 const savedGridOpacity = Number(localStorage.getItem("quackTraceGridOpacity"));
 const savedSnapToGrid = localStorage.getItem("quackTraceSnapToGrid") === "true";
+const savedPointLabels = localStorage.getItem("quackTraceShowPointLabels");
+const DEFAULT_IMAGE_OPACITY = 0.3;
+const DEFAULT_SHAPE_OPACITY = 0.7;
+const DEFAULT_GRID_OPACITY = 0.5;
 
 const state = {
   image: null,
   imageName: "untitled",
   view: { x: 40, y: 40, zoom: 1 },
   sourceOffset: { x: 0, y: 0 },
-  imageOpacity: 0.3,
-  shapeOpacity: 0.74,
-  gridOpacity: Number.isFinite(savedGridOpacity) ? Math.min(1, Math.max(0, savedGridOpacity)) : 1,
+  sourceScale: 1,
+  imageOpacity: DEFAULT_IMAGE_OPACITY,
+  shapeOpacity: DEFAULT_SHAPE_OPACITY,
+  gridOpacity: Number.isFinite(savedGridOpacity) ? Math.min(1, Math.max(0, savedGridOpacity)) : DEFAULT_GRID_OPACITY,
   cursorImagePoint: null,
   loupeZoom: 4,
   mode: "point",
@@ -33,15 +38,20 @@ const state = {
   showGuides: true,
   showCanvasGrid: true,
   showScaleReference: true,
+  showPointLabels: savedPointLabels === null ? true : savedPointLabels === "true",
   snapToGrid: savedSnapToGrid,
   areaLock: false,
   arrowMoveAmount: 1,
   drag: null,
+  spacePanActive: false,
   skipNextCanvasClick: false,
   lastPointClick: null,
   fitViewBefore: null,
   undoStack: [],
   redoStack: [],
+  shapeClipboard: null,
+  sketchStrokes: [],
+  sketchCircles: [],
 };
 
 const els = {
@@ -87,14 +97,17 @@ const POINT_HIT_RADIUS = 20;
 const FACE_HANDLE_HIT_RADIUS = 18;
 const FACE_HANDLE_OUTSET = 12;
 const CLOSE_DOUBLE_CLICK_MS = 650;
-const GRID_PAPER_MINOR_PX = 15;
+const GRID_PAPER_MINOR_PX = 22.5;
 const GRID_PAPER_MAJOR_PX = GRID_PAPER_MINOR_PX * 5;
+const MIN_SOURCE_SCALE = 0.1;
+const MAX_SOURCE_SCALE = 8;
 const DRAW_COLORS = {
   line: "#f2c037",
   label: "#f8f8f6",
   labelUnderlay: "rgba(16, 17, 20, 0.72)",
   pointStroke: "#20242a",
   selected: "#fff7d7",
+  loupeTarget: "#2f7dff",
   handle: "#f2c037",
   handleFill: "#f8f8f6",
   guide: "rgba(154, 160, 168, 0.46)",
@@ -114,10 +127,17 @@ const I18N = {
     "top.fitBack": "元の表示に戻す",
     "top.source": "下敷きを動かす",
     "top.sourceTitle": "トレース元の画像や方眼紙だけをドラッグで移動します",
+    "top.sketch": "下書きペン",
+    "top.sketchTitle": "作図や出力に入らない下書き線を描きます",
+    "top.sketchCircle": "下書き円",
+    "top.sketchCircleTitle": "作図や出力に入らない下書き円を描きます",
+    "top.clearSketch": "下書きを消す",
+    "top.clearSketchTitle": "下書きペンと下書き円だけを消します",
     "top.grid": "方眼紙",
     "top.gridTitle": "実寸確認用の方眼紙を下敷きにします",
     "top.language": "English",
     "action.playQuack": "アヒルを鳴かす",
+    "action.playQuackReset": "アヒルを鳴かして、点・線・面をリセット",
     "section.operation": "操作",
     "section.operationMode": "操作モード",
     "section.coordinates": "座標",
@@ -145,6 +165,7 @@ const I18N = {
     "mode.curve": "曲げる",
     "mode.calibrate": "スケール設定",
     "mode.origin": "原点",
+    "mode.circle": "円を書く",
     "action.close": "閉じる",
     "action.reset": "リセット",
     "action.resetTitle": "点・線・面をリセット",
@@ -160,15 +181,20 @@ const I18N = {
     "action.horizontalTitle": "選択した線を水平にします",
     "action.vertical": "垂直",
     "action.verticalTitle": "選択した線を垂直にします",
+    "action.flipFace": "左右反転",
+    "action.flipFaceTitle": "選択した閉じた図を左右反転します",
     "action.deleteFace": "図形を削除",
     "action.deleteFaceTitle": "選択した閉じた図と、その図だけで使っている点・線を削除します",
     "action.hideGuides": "ガイド非表示",
     "action.showGuides": "ガイド表示",
+    "action.hidePointLabels": "点名非表示",
+    "action.showPointLabels": "点名表示",
+    "action.pointLabelsTitle": "キャンバス上のポイント番号と点名だけを表示・非表示にします",
     "action.hideCanvasGrid": "方眼非表示",
     "action.showCanvasGrid": "方眼表示",
     "action.snapOn": "スナップON",
     "action.snapOff": "スナップOFF",
-    "action.snapTitle": "点を方眼の小マスに吸着します",
+    "action.snapTitle": "点と下書きを方眼の小マスに吸着します",
     "action.hideScaleReference": "スケール四角非表示",
     "action.showScaleReference": "スケール四角表示",
     "guide.origin": "0,0",
@@ -177,16 +203,24 @@ const I18N = {
     "action.details": "こまかい調整",
     "export.importJson": "JSON読込",
     "export.importJsonTitle": "Quack TraceのJSON保存から作業状態を読み込みます",
+    "export.importDxf": "DXF読込",
+    "export.importDxfTitle": "CADで作成したDXFの線・ポリラインを読み込みます。DXF単位はmmとして扱います",
     "export.copyJson": "JSONコピー",
     "export.saveJson": "JSON保存",
     "export.saveCsv": "CSV保存",
     "export.saveSvg": "SVG保存",
     "export.saveDxf": "DXF保存",
+    "export.printPdf": "印刷 / PDF",
+    "export.printPdfTitle": "実寸の黒線だけを白背景で印刷します。PDF保存はブラウザの印刷画面で選べます",
     "export.saveMdClo": "MD/CLO py保存",
     "export.saveBlender": "Blender py保存",
     "export.ready": "出力OK",
     "export.noScale": "スケール未設定",
     "export.noFace": "閉じた面が必要",
+    "print.preparing": "実寸の印刷用ページを開きます。倍率100%・用紙に合わせない設定で確認してください。",
+    "print.blocked": "印刷用ページを開けませんでした。ポップアップ許可を確認してください。",
+    "print.needScale": "印刷/PDFの前に、スケールを設定してください。",
+    "print.needLine": "印刷/PDFの前に、線を作ってください。",
     "scale.unset": "未設定",
     "scale.onePoint": "1点目あり",
     "scale.twoPoints": "2点取得済み",
@@ -195,9 +229,20 @@ const I18N = {
     "coach.start": "まず画像か方眼紙を選びます。テスト図形でも試せます。",
     "status.loadImage": "画像を読み込むか、テスト図形を表示してください。",
     "status.select": "点・線・閉じた図を選びます。閉じた図はそのままドラッグで移動できます。",
+    "status.boxSelect": "囲った範囲の点を選択します。",
     "status.calibrate": "長さが分かる線の両端を2点クリックして、実寸の長さを入力します。",
     "status.origin": "座標のはじまりにしたい位置をクリックしてください。",
     "status.source": "トレース元の画像や方眼紙だけをドラッグで移動できます。作った点や線は動きません。",
+    "status.sketch": "下書きペンです。作図や出力には入りません。",
+    "status.sketchCircle": "下書き円です。中心からドラッグして半径を決めます。作図や出力には入りません。",
+    "status.circle": "中心からドラッグして、図形としての円を作ります。円は4点と4本のカーブで作ります。",
+    "status.circleDrawing": "円の半径を決めています。",
+    "status.circleCreated": "円を作りました。4点と4本のカーブで閉じた図形にしています。",
+    "status.circleTooSmall": "円が小さすぎます。中心から少しドラッグしてください。",
+    "status.sketchCleared": "下書きを消しました。",
+    "status.noSketch": "消す下書きがありません。",
+    "status.viewPan": "視界だけを移動します。座標・原点・下敷きは動きません。",
+    "status.viewPanned": "視界だけを移動しました。座標・原点・下敷きは固定です。",
     "status.pan": "閉じた図の内側をドラッグして、その図だけ移動できます。",
     "status.curve": "線をクリックして曲げます。青いハンドルで形を調整できます。",
     "status.point": "点を置きたい場所をクリックしてください。置いた点はあとから動かせます。",
@@ -223,10 +268,17 @@ const I18N = {
     "top.fitBack": "Restore view",
     "top.source": "Move underlay",
     "top.sourceTitle": "Drag only the source image or grid paper without moving traced geometry",
+    "top.sketch": "Sketch pencil",
+    "top.sketchTitle": "Draw freehand guide lines that are not included in traced geometry or exports",
+    "top.sketchCircle": "Sketch circle",
+    "top.sketchCircleTitle": "Draw guide circles that are not included in traced geometry or exports",
+    "top.clearSketch": "Clear sketch",
+    "top.clearSketchTitle": "Clear only sketch pencil lines and sketch circles",
     "top.grid": "Grid paper",
     "top.gridTitle": "Use grid paper as the tracing underlay",
     "top.language": "日本語",
     "action.playQuack": "Play duck quack",
+    "action.playQuackReset": "Play duck quack and reset points, lines, and shapes",
     "section.operation": "Tools",
     "section.operationMode": "Tool mode",
     "section.coordinates": "Coordinates",
@@ -254,6 +306,7 @@ const I18N = {
     "mode.curve": "Curve",
     "mode.calibrate": "Set scale",
     "mode.origin": "Origin",
+    "mode.circle": "Draw circle",
     "action.close": "Close",
     "action.reset": "Reset",
     "action.resetTitle": "Reset points, lines, and faces",
@@ -269,15 +322,20 @@ const I18N = {
     "action.horizontalTitle": "Make the selected line horizontal",
     "action.vertical": "Vertical",
     "action.verticalTitle": "Make the selected line vertical",
+    "action.flipFace": "Flip",
+    "action.flipFaceTitle": "Flip the selected closed shape horizontally",
     "action.deleteFace": "Delete shape",
     "action.deleteFaceTitle": "Delete the selected closed shape and points used only by that shape",
     "action.hideGuides": "Hide guides",
     "action.showGuides": "Show guides",
+    "action.hidePointLabels": "Hide point names",
+    "action.showPointLabels": "Show point names",
+    "action.pointLabelsTitle": "Show or hide only point numbers and names on the canvas",
     "action.hideCanvasGrid": "Hide grid",
     "action.showCanvasGrid": "Show grid",
     "action.snapOn": "Snap ON",
     "action.snapOff": "Snap OFF",
-    "action.snapTitle": "Snap points to the small grid squares",
+    "action.snapTitle": "Snap points and sketch guides to the small grid squares",
     "action.hideScaleReference": "Hide scale square",
     "action.showScaleReference": "Show scale square",
     "guide.origin": "0,0",
@@ -286,16 +344,24 @@ const I18N = {
     "action.details": "Fine controls",
     "export.importJson": "Import JSON",
     "export.importJsonTitle": "Import a saved Quack Trace JSON work state",
+    "export.importDxf": "Import DXF",
+    "export.importDxfTitle": "Import lines and polylines from a CAD DXF file. DXF units are treated as millimeters.",
     "export.copyJson": "Copy JSON",
     "export.saveJson": "Save JSON",
     "export.saveCsv": "Save CSV",
     "export.saveSvg": "Save SVG",
     "export.saveDxf": "Save DXF",
+    "export.printPdf": "Print / PDF",
+    "export.printPdfTitle": "Print only real-size black pattern lines on a white background. Choose Save as PDF in the browser print dialog.",
     "export.saveMdClo": "Save MD/CLO py",
     "export.saveBlender": "Save Blender py",
     "export.ready": "Ready to export",
     "export.noScale": "Scale not set",
     "export.noFace": "Closed face required",
+    "print.preparing": "Opening a real-size print page. Check scale 100% and do not fit to page.",
+    "print.blocked": "Could not open the print page. Check popup permissions.",
+    "print.needScale": "Set the scale before printing or saving PDF.",
+    "print.needLine": "Create lines before printing or saving PDF.",
     "scale.unset": "Not set",
     "scale.onePoint": "1 point set",
     "scale.twoPoints": "2 points set",
@@ -304,9 +370,20 @@ const I18N = {
     "coach.start": "Load an image, grid paper, or sample shape to begin.",
     "status.loadImage": "Load an image or show a sample shape.",
     "status.select": "Select points, lines, or closed shapes. Closed shapes can be dragged directly.",
+    "status.boxSelect": "Drag a box to select points inside it.",
     "status.calibrate": "Click both ends of a known length, then enter the real length.",
     "status.origin": "Click where the coordinate origin should be.",
     "status.source": "Drag only the source image or grid paper. Traced points and lines stay fixed.",
+    "status.sketch": "Sketch pencil. These guide lines are not included in geometry or exports.",
+    "status.sketchCircle": "Sketch circle. Drag from the center to set the radius. It is not included in geometry or exports.",
+    "status.circle": "Drag from the center to create a real circle shape. It uses 4 points and 4 curved edges.",
+    "status.circleDrawing": "Setting the circle radius.",
+    "status.circleCreated": "Created a circle as a closed shape with 4 points and 4 curved edges.",
+    "status.circleTooSmall": "The circle is too small. Drag farther from the center.",
+    "status.sketchCleared": "Cleared the sketch guides.",
+    "status.noSketch": "There are no sketch guides to clear.",
+    "status.viewPan": "Moving only the view. Coordinates, origin, and underlay stay fixed.",
+    "status.viewPanned": "Moved only the view. Coordinates, origin, and underlay stayed fixed.",
     "status.pan": "Drag inside a closed shape to move only that shape.",
     "status.curve": "Click a line to bend it. Use the blue handles to adjust the curve.",
     "status.point": "Click to place points. You can move them later.",
@@ -326,7 +403,7 @@ const I18N = {
   },
 };
 
-state.language = localStorage.getItem("quackTraceLanguage") === "ja" ? "ja" : "en";
+state.language = "en";
 
 function t(key) {
   return I18N[state.language]?.[key] || I18N.ja[key] || key;
@@ -344,6 +421,14 @@ function setButton(button, textKey, titleKey = null) {
     button.title = t(titleKey);
     button.setAttribute("aria-label", t(titleKey));
   }
+}
+
+function isTextInputActive() {
+  return document.activeElement?.matches("input, textarea, select");
+}
+
+function shouldStartViewportPan(event) {
+  return event.button === 1 || (event.button === 0 && state.spacePanActive);
 }
 
 const toolbarActions = document.querySelector(".toolbar-actions");
@@ -530,12 +615,45 @@ traceSourceMoveButton.type = "button";
 traceSourceMoveButton.textContent = "下敷きを動かす";
 traceSourceMoveButton.title = "トレース元の画像や方眼だけをドラッグで移動します";
 
+const sketchModeButton = document.createElement("button");
+sketchModeButton.id = "sketchModeButton";
+sketchModeButton.className = "mode-button toolbar-pencil-button";
+sketchModeButton.dataset.mode = "sketch";
+sketchModeButton.type = "button";
+sketchModeButton.textContent = "✎";
+sketchModeButton.title = "下書きペン";
+sketchModeButton.setAttribute("aria-label", "下書きペン");
+
+const sketchCircleButton = document.createElement("button");
+sketchCircleButton.id = "sketchCircleButton";
+sketchCircleButton.className = "mode-button toolbar-circle-button";
+sketchCircleButton.dataset.mode = "sketch-circle";
+sketchCircleButton.type = "button";
+sketchCircleButton.textContent = "○";
+sketchCircleButton.title = "下書き円";
+sketchCircleButton.setAttribute("aria-label", "下書き円");
+
+const clearSketchButton = document.createElement("button");
+clearSketchButton.id = "clearSketchButton";
+clearSketchButton.className = "toolbar-clear-sketch-button";
+clearSketchButton.type = "button";
+clearSketchButton.textContent = "×";
+clearSketchButton.title = "下書きを消す";
+clearSketchButton.setAttribute("aria-label", "下書きを消す");
+
 const guideToggleButton = document.createElement("button");
 guideToggleButton.id = "guideToggleButton";
 guideToggleButton.type = "button";
 guideToggleButton.textContent = "ガイド非表示";
 guideToggleButton.title = "点・ラベル・ハンドルなどを隠して、図形の形だけを確認します";
 guideToggleButton.className = "guide-toggle-button";
+
+const pointLabelToggleButton = document.createElement("button");
+pointLabelToggleButton.id = "pointLabelToggleButton";
+pointLabelToggleButton.type = "button";
+pointLabelToggleButton.textContent = "点名非表示";
+pointLabelToggleButton.title = "キャンバス上のポイント番号と点名だけを表示・非表示にします";
+pointLabelToggleButton.className = "guide-toggle-button";
 
 const canvasGridToggleButton = document.createElement("button");
 canvasGridToggleButton.id = "canvasGridToggleButton";
@@ -564,10 +682,21 @@ deleteFaceButton.type = "button";
 deleteFaceButton.textContent = "図形を削除";
 deleteFaceButton.title = "選択した閉じた図と、その図だけで使っている点・線を削除します";
 deleteFaceButton.className = "danger-action";
+const flipFaceButton = document.createElement("button");
+flipFaceButton.id = "flipFaceButton";
+flipFaceButton.type = "button";
+flipFaceButton.textContent = "左右反転";
+flipFaceButton.title = "選択した閉じた図を左右反転します";
 
 els.connect?.remove();
 els.closeShape.textContent = "閉じる";
 els.closeShape.classList.add("primary-action");
+const circleModeButton = document.createElement("button");
+circleModeButton.id = "circleModeButton";
+circleModeButton.className = "mode-button";
+circleModeButton.dataset.mode = "circle";
+circleModeButton.type = "button";
+circleModeButton.textContent = "円を書く";
 
 const operationSection = modeGrid.closest(".panel-section");
 const connectionSection = els.closeShape.closest(".panel-section");
@@ -579,6 +708,13 @@ viewSection.className = "panel-section view-options-section";
 operationSection.after(connectionSection);
 connectionSection.after(viewSection);
 coordinateSection.classList.add("coordinate-section");
+const coordinateHeading = coordinateSection.querySelector("h2");
+const unitLabel = els.unit.closest("label");
+const coordinateHeader = document.createElement("div");
+coordinateHeader.className = "coordinate-header";
+unitLabel.classList.add("coordinate-unit-label");
+coordinateSection.insertBefore(coordinateHeader, coordinateHeading);
+coordinateHeader.append(coordinateHeading, unitLabel);
 rightPanel.insertBefore(coordinateSection, pointListSection);
 const edgeMeasurePanel = document.createElement("div");
 edgeMeasurePanel.id = "edgeMeasurePanel";
@@ -592,7 +728,8 @@ edgeMeasurePanel.innerHTML = `
 coordinateSection.appendChild(edgeMeasurePanel);
 const edgeMeasureValue = edgeMeasurePanel.querySelector("#edgeMeasureValue");
 const edgeMeasureMeta = edgeMeasurePanel.querySelector("#edgeMeasureMeta");
-els.imageInput.closest(".file-button").before(traceSourceMoveButton);
+els.imageInput.closest(".file-button").before(sketchModeButton, sketchCircleButton, clearSketchButton, traceSourceMoveButton);
+els.closeShape.after(circleModeButton);
 
 const assistDetails = document.createElement("details");
 assistDetails.className = "assist-details";
@@ -608,15 +745,16 @@ assistActions.appendChild(straightenButton);
 assistActions.appendChild(horizontalButton);
 assistActions.appendChild(verticalButton);
 assistActions.appendChild(resetButton);
+assistActions.appendChild(flipFaceButton);
 assistActions.appendChild(els.yUp.closest("label"));
 assistActions.appendChild(deleteFaceButton);
 const viewToggleRow = document.createElement("div");
 viewToggleRow.className = "view-toggle-row";
-viewToggleRow.append(guideToggleButton, canvasGridToggleButton);
+viewToggleRow.append(guideToggleButton, pointLabelToggleButton);
 viewSection.appendChild(viewToggleRow);
 const scaleToolRow = document.createElement("div");
 scaleToolRow.className = "view-toggle-row";
-scaleToolRow.append(scaleReferenceToggleButton, gridSnapToggleButton);
+scaleToolRow.append(canvasGridToggleButton, scaleReferenceToggleButton, gridSnapToggleButton);
 viewSection.appendChild(scaleToolRow);
 
 const blankGridButton = document.createElement("button");
@@ -631,6 +769,11 @@ downloadDxfButton.id = "downloadDxfButton";
 downloadDxfButton.type = "button";
 downloadDxfButton.textContent = "DXF保存";
 document.querySelector(".export-grid").appendChild(downloadDxfButton);
+
+const printPdfButton = document.createElement("button");
+printPdfButton.id = "printPdfButton";
+printPdfButton.type = "button";
+printPdfButton.textContent = "印刷 / PDF";
 
 const downloadMdCloPyButton = document.createElement("button");
 downloadMdCloPyButton.id = "downloadMdCloPyButton";
@@ -651,11 +794,24 @@ importJsonInput.accept = ".json,application/json";
 importJsonInput.hidden = true;
 document.body.appendChild(importJsonInput);
 
+const importDxfInput = document.createElement("input");
+importDxfInput.id = "importDxfInput";
+importDxfInput.type = "file";
+importDxfInput.accept = ".dxf,application/dxf,text/plain";
+importDxfInput.hidden = true;
+document.body.appendChild(importDxfInput);
+
 const importJsonButton = document.createElement("button");
 importJsonButton.id = "importJsonButton";
 importJsonButton.type = "button";
 importJsonButton.textContent = "JSON読込";
 importJsonButton.title = "Quack TraceのJSON保存から作業状態を読み込みます";
+
+const importDxfButton = document.createElement("button");
+importDxfButton.id = "importDxfButton";
+importDxfButton.type = "button";
+importDxfButton.textContent = "DXF読込";
+importDxfButton.title = "CADで作成したDXFの線・ポリラインを読み込みます";
 
 const svgLabelsLabel = document.createElement("label");
 svgLabelsLabel.className = "switch-row export-option-row";
@@ -707,8 +863,10 @@ appendExportCard("記録", [
   els.downloadCsv,
 ]);
 appendExportCard("図面", [
+  importDxfButton,
   els.downloadSvg,
   downloadDxfButton,
+  printPdfButton,
 ], [svgLabelsLabel]);
 appendExportCard("Python", [
   downloadMdCloPyButton,
@@ -727,11 +885,11 @@ opacityInput.type = "range";
 opacityInput.min = "0";
 opacityInput.max = "1";
 opacityInput.step = "0.05";
-opacityInput.value = "0.3";
+opacityInput.value = String(state.imageOpacity);
 opacityLabel.appendChild(opacityInput);
 const opacityValue = document.createElement("span");
 opacityValue.className = "range-readout";
-opacityValue.textContent = "30%";
+opacityValue.textContent = `${Math.round(state.imageOpacity * 100)}%`;
 opacityLabel.appendChild(opacityValue);
 
 const shapeOpacityLabel = document.createElement("label");
@@ -782,11 +940,17 @@ function applyLanguage() {
 
   setButton(els.language, "top.language");
   if (els.brandSound) {
-    els.brandSound.title = t("action.playQuack");
-    els.brandSound.setAttribute("aria-label", t("action.playQuack"));
+    els.brandSound.title = t("action.playQuackReset");
+    els.brandSound.setAttribute("aria-label", t("action.playQuackReset"));
   }
   setButton(els.sampleButton, "top.sample");
   els.fitButton.title = state.fitViewBefore ? t("top.fitBack") : t("top.fit");
+  sketchModeButton.title = t("top.sketchTitle");
+  sketchModeButton.setAttribute("aria-label", t("top.sketch"));
+  sketchCircleButton.title = t("top.sketchCircleTitle");
+  sketchCircleButton.setAttribute("aria-label", t("top.sketchCircle"));
+  clearSketchButton.title = t("top.clearSketchTitle");
+  clearSketchButton.setAttribute("aria-label", t("top.clearSketch"));
   setButton(traceSourceMoveButton, "top.source", "top.sourceTitle");
   setButton(blankGridButton, "top.grid", "top.gridTitle");
 
@@ -795,6 +959,7 @@ function applyLanguage() {
   setButton(curveModeButton, "mode.curve");
   setButton(calibrateModeButton, "mode.calibrate");
   setButton(originModeButton, "mode.origin");
+  setButton(circleModeButton, "mode.circle");
 
   setButton(els.closeShape, "action.close");
   setButton(resetButton, "action.reset", "action.resetTitle");
@@ -808,14 +973,18 @@ function applyLanguage() {
   setButton(straightenButton, "action.straighten", "action.straightenTitle");
   setButton(horizontalButton, "action.horizontal", "action.horizontalTitle");
   setButton(verticalButton, "action.vertical", "action.verticalTitle");
+  setButton(flipFaceButton, "action.flipFace", "action.flipFaceTitle");
   setButton(deleteFaceButton, "action.deleteFace", "action.deleteFaceTitle");
 
   guideToggleButton.textContent = state.showGuides ? t("action.hideGuides") : t("action.showGuides");
+  pointLabelToggleButton.textContent = state.showPointLabels ? t("action.hidePointLabels") : t("action.showPointLabels");
+  pointLabelToggleButton.title = t("action.pointLabelsTitle");
   canvasGridToggleButton.textContent = state.showCanvasGrid ? t("action.hideCanvasGrid") : t("action.showCanvasGrid");
   gridSnapToggleButton.textContent = state.snapToGrid ? t("action.snapOn") : t("action.snapOff");
   gridSnapToggleButton.title = t("action.snapTitle");
   scaleReferenceToggleButton.textContent = state.showScaleReference ? t("action.hideScaleReference") : t("action.showScaleReference");
   guideToggleButton.classList.toggle("active", !state.showGuides);
+  pointLabelToggleButton.classList.toggle("active", !state.showPointLabels);
   canvasGridToggleButton.classList.toggle("active", !state.showCanvasGrid);
   gridSnapToggleButton.classList.toggle("active", state.snapToGrid);
   scaleReferenceToggleButton.classList.toggle("active", !state.showScaleReference);
@@ -826,11 +995,13 @@ function applyLanguage() {
   }
 
   setButton(importJsonButton, "export.importJson", "export.importJsonTitle");
+  setButton(importDxfButton, "export.importDxf", "export.importDxfTitle");
   setButton(els.copyJson, "export.copyJson");
   setButton(els.downloadJson, "export.saveJson");
   setButton(els.downloadCsv, "export.saveCsv");
   setButton(els.downloadSvg, "export.saveSvg");
   setButton(downloadDxfButton, "export.saveDxf");
+  setButton(printPdfButton, "export.printPdf", "export.printPdfTitle");
   setButton(downloadMdCloPyButton, "export.saveMdClo");
   setButton(downloadBlenderPyButton, "export.saveBlender");
   svgLabelsLabel.lastChild.textContent = t("label.svgNames");
@@ -903,8 +1074,32 @@ function imageToScreen(imageX, imageY) {
   };
 }
 
-function sourceImageToScreen(imageX, imageY) {
-  return imageToScreen(imageX + state.sourceOffset.x, imageY + state.sourceOffset.y);
+function sourceImageRect() {
+  if (!state.image) return { x: state.sourceOffset.x, y: state.sourceOffset.y, width: 0, height: 0 };
+  return {
+    x: state.sourceOffset.x,
+    y: state.sourceOffset.y,
+    width: state.image.width * state.sourceScale,
+    height: state.image.height * state.sourceScale,
+  };
+}
+
+function scaleSourceUnderlayAt(screenPoint, factor) {
+  if (!state.image) return false;
+  const worldPoint = screenToImage(screenPoint.x, screenPoint.y);
+  const currentScale = state.sourceScale || 1;
+  const nextScale = Math.min(MAX_SOURCE_SCALE, Math.max(MIN_SOURCE_SCALE, currentScale * factor));
+  if (Math.abs(nextScale - currentScale) < 0.0001) return false;
+  const sourcePoint = {
+    x: (worldPoint.x - state.sourceOffset.x) / currentScale,
+    y: (worldPoint.y - state.sourceOffset.y) / currentScale,
+  };
+  state.sourceScale = nextScale;
+  state.sourceOffset = {
+    x: worldPoint.x - sourcePoint.x * nextScale,
+    y: worldPoint.y - sourcePoint.y * nextScale,
+  };
+  return true;
 }
 
 function snapGridStepImagePx() {
@@ -913,14 +1108,7 @@ function snapGridStepImagePx() {
 }
 
 function snapGridOriginImagePoint() {
-  const origin = state.origin || { x: 0, y: 0 };
-  if (state.imageName === "blank-grid") {
-    return {
-      x: origin.x + state.sourceOffset.x,
-      y: origin.y + state.sourceOffset.y,
-    };
-  }
-  return origin;
+  return state.origin || { x: 0, y: 0 };
 }
 
 function snapImagePointToGrid(point) {
@@ -932,6 +1120,10 @@ function snapImagePointToGrid(point) {
     x: origin.x + Math.round((point.x - origin.x) / step) * step,
     y: origin.y + Math.round((point.y - origin.y) / step) * step,
   };
+}
+
+function sketchImagePoint(point) {
+  return state.snapToGrid ? snapImagePointToGrid(point) : point;
 }
 
 function resetCanvasGridBackground() {
@@ -956,14 +1148,15 @@ function updateCanvasGridBackground() {
     resetCanvasGridBackground();
     return;
   }
-  if (state.imageName !== "blank-grid" || !state.origin || !state.image) {
+  if (!state.origin || !state.image) {
     resetCanvasGridBackground();
     return;
   }
 
-  const origin = sourceImageToScreen(state.origin.x, state.origin.y);
-  const minorSize = Math.max(2, GRID_PAPER_MINOR_PX * state.view.zoom);
-  const majorSize = Math.max(minorSize, GRID_PAPER_MAJOR_PX * state.view.zoom);
+  const snapOrigin = snapGridOriginImagePoint();
+  const origin = imageToScreen(snapOrigin.x, snapOrigin.y);
+  const minorSize = Math.max(2, snapGridStepImagePx() * state.view.zoom);
+  const majorSize = Math.max(minorSize, minorSize * 5);
   canvasPanel.style.setProperty("--canvas-grid-minor", `${minorSize}px`);
   canvasPanel.style.setProperty("--canvas-grid-major", `${majorSize}px`);
   canvasPanel.style.setProperty("--canvas-grid-origin", `${origin.x}px ${origin.y}px`);
@@ -978,6 +1171,90 @@ function hitTestPoint(screenX, screenY) {
     }
   }
   return null;
+}
+
+function hitTestSelectedPoint(screenX, screenY) {
+  if (state.selected.size === 0) return null;
+  let closest = null;
+  let closestDistance = Infinity;
+  state.points.forEach((point) => {
+    if (!state.selected.has(point.id)) return;
+    const screen = imageToScreen(point.x, point.y);
+    const distance = Math.hypot(screen.x - screenX, screen.y - screenY);
+    if (distance <= POINT_HIT_RADIUS && distance < closestDistance) {
+      closest = point;
+      closestDistance = distance;
+    }
+  });
+  return closest;
+}
+
+function selectedPointScreenBounds(padding = 0) {
+  const selectedPoints = state.points.filter((point) => state.selected.has(point.id));
+  if (selectedPoints.length < 2) return null;
+  const screens = selectedPoints.map((point) => imageToScreen(point.x, point.y));
+  return {
+    minX: Math.min(...screens.map((point) => point.x)) - padding,
+    minY: Math.min(...screens.map((point) => point.y)) - padding,
+    maxX: Math.max(...screens.map((point) => point.x)) + padding,
+    maxY: Math.max(...screens.map((point) => point.y)) + padding,
+  };
+}
+
+function pointInsideBox(point, box) {
+  return Boolean(box)
+    && point.x >= box.minX
+    && point.x <= box.maxX
+    && point.y >= box.minY
+    && point.y <= box.maxY;
+}
+
+function screenBoxFromDrag(drag) {
+  const endX = Number.isFinite(drag.currentX) ? drag.currentX : drag.startX;
+  const endY = Number.isFinite(drag.currentY) ? drag.currentY : drag.startY;
+  return {
+    minX: Math.min(drag.startX, endX),
+    minY: Math.min(drag.startY, endY),
+    maxX: Math.max(drag.startX, endX),
+    maxY: Math.max(drag.startY, endY),
+  };
+}
+
+function pointIsInsideScreenBox(point, box) {
+  const screen = imageToScreen(point.x, point.y);
+  return screen.x >= box.minX
+    && screen.x <= box.maxX
+    && screen.y >= box.minY
+    && screen.y <= box.maxY;
+}
+
+function applyBoxSelection(drag) {
+  const box = screenBoxFromDrag(drag);
+  const selectedIds = state.points
+    .filter((point) => pointIsInsideScreenBox(point, box))
+    .map((point) => point.id);
+  if (!drag.additive) {
+    state.selected.clear();
+  }
+  selectedIds.forEach((id) => state.selected.add(id));
+  clearSelectedEdges();
+  state.selectedFaceIndex = null;
+  const selectedFace = selectedFaceTarget();
+  if (selectedFace && selectedFace.face.every((id) => state.selected.has(id))) {
+    state.selectedFaceIndex = selectedFace.index;
+  }
+  const count = selectedIds.length;
+  setStatus(state.language === "en"
+    ? `Selected ${count} point${count === 1 ? "" : "s"} with the box.`
+    : `範囲選択で${count}点を選択しました。`);
+  updateAll();
+}
+
+function appendSketchPoint(stroke, point) {
+  const previous = stroke.points[stroke.points.length - 1];
+  if (previous && Math.hypot(previous.x - point.x, previous.y - point.y) * state.view.zoom < 1.5) return false;
+  stroke.points.push(point);
+  return true;
 }
 
 function edgeControl(edge) {
@@ -1001,10 +1278,24 @@ function shiftedEdgeControl(control, dx, dy) {
   return shifted;
 }
 
+function edgeControlSnapshotsForMovingPoints(pointIds) {
+  const movingIds = new Set(pointIds);
+  return state.edges
+    .map((edge, index) => ({ edge, index }))
+    .filter(({ edge }) => movingIds.has(edge[0]) && movingIds.has(edge[1]) && edgeControl(edge))
+    .map(({ edge, index }) => ({
+      index,
+      control: structuredClone(edgeControl(edge)),
+    }));
+}
+
 function snapshotTrace() {
   return {
     view: structuredClone(state.view),
     sourceOffset: structuredClone(state.sourceOffset),
+    sourceScale: state.sourceScale,
+    sketchStrokes: structuredClone(state.sketchStrokes),
+    sketchCircles: structuredClone(state.sketchCircles),
     points: structuredClone(state.points),
     edges: structuredClone(state.edges),
     faces: structuredClone(state.faces),
@@ -1026,6 +1317,9 @@ function snapshotTrace() {
 function restoreTrace(snapshot) {
   if (snapshot.view) state.view = structuredClone(snapshot.view);
   state.sourceOffset = structuredClone(snapshot.sourceOffset || { x: 0, y: 0 });
+  state.sourceScale = Math.min(MAX_SOURCE_SCALE, Math.max(MIN_SOURCE_SCALE, finiteNumber(snapshot.sourceScale) || 1));
+  state.sketchStrokes = structuredClone(snapshot.sketchStrokes || []);
+  state.sketchCircles = structuredClone(snapshot.sketchCircles || []);
   state.points = structuredClone(snapshot.points);
   state.edges = structuredClone(snapshot.edges);
   state.faces = structuredClone(snapshot.faces);
@@ -1101,6 +1395,8 @@ function hasTraceContent() {
     state.points.length > 0
     || state.edges.length > 0
     || state.faces.length > 0
+    || state.sketchStrokes.length > 0
+    || state.sketchCircles.length > 0
     || state.calibrationClicks.length > 0
   );
 }
@@ -1405,6 +1701,11 @@ function updateSelectedEdgeMeasure() {
   edgeMeasureMeta.textContent = `${from.name} - ${to.name} / ${edgeCubicControls(edge) ? "カーブ" : "直線"}`;
 }
 
+function updateDragPreview() {
+  updateSelectedEdgeMeasure();
+  draw();
+}
+
 function faceOutlineImagePoints(face, overrides = null) {
   const outline = [];
   face.forEach((fromId, index) => {
@@ -1696,26 +1997,49 @@ function patternCoordsToImagePoint(point, unit, cmPerPixel, origin, yUp) {
   };
 }
 
+function areaLockFallbackDirection(face, index) {
+  const previous = state.points.find((point) => point.id === face[(index - 1 + face.length) % face.length]);
+  const next = state.points.find((point) => point.id === face[(index + 1) % face.length]);
+  if (!previous || !next) return null;
+  return normalizeVector({ x: next.x - previous.x, y: next.y - previous.y });
+}
+
+function areaLockTangentDirection(pointId, face, origin, area) {
+  if (!origin || !Number.isFinite(area)) return null;
+  const baseStep = Math.sqrt(Math.max(area, 1)) * 0.01;
+  const step = Math.max(0.25, Math.min(12, baseStep));
+  const constraint = { pointId, face };
+  const areaAt = (dx, dy) => areaWithPointOverride(constraint, {
+    x: origin.x + dx,
+    y: origin.y + dy,
+  });
+  const gx = (areaAt(step, 0) - areaAt(-step, 0)) / (step * 2);
+  const gy = (areaAt(0, step) - areaAt(0, -step)) / (step * 2);
+  const gradientLength = Math.hypot(gx, gy);
+  if (gradientLength < 0.000001) return null;
+  return normalizeVector({ x: -gy, y: gx });
+}
+
 function getAreaLockConstraint(pointId) {
   const face = state.faces.find((candidate) => candidate.includes(pointId));
   if (!face || face.length < 3) return null;
 
   const index = face.indexOf(pointId);
-  const previous = state.points.find((point) => point.id === face[(index - 1 + face.length) % face.length]);
-  const next = state.points.find((point) => point.id === face[(index + 1) % face.length]);
-  if (!previous || !next) return null;
+  const point = findPointById(pointId);
+  if (!point) return null;
 
-  const direction = { x: next.x - previous.x, y: next.y - previous.y };
-  const length = Math.hypot(direction.x, direction.y);
-  if (length === 0) return null;
+  const area = polygonAreaFromPoints(faceOutlineImagePoints(face));
+  const direction = areaLockTangentDirection(pointId, face, point, area)
+    || areaLockFallbackDirection(face, index);
+  if (!direction) return null;
 
   return {
     pointId,
     face,
-    area: polygonAreaFromPoints(faceOutlineImagePoints(face)),
-    origin: { x: findPointById(pointId)?.x || 0, y: findPointById(pointId)?.y || 0 },
-    ux: direction.x / length,
-    uy: direction.y / length,
+    area,
+    origin: { x: point.x, y: point.y },
+    ux: direction.x,
+    uy: direction.y,
   };
 }
 
@@ -2018,6 +2342,9 @@ function statusForMode(mode) {
   if (mode === "calibrate") return t("status.calibrate");
   if (mode === "origin") return t("status.origin");
   if (mode === "source") return t("status.source");
+  if (mode === "sketch") return t("status.sketch");
+  if (mode === "sketch-circle") return t("status.sketchCircle");
+  if (mode === "circle") return t("status.circle");
   if (mode === "pan") return t("status.pan");
   if (mode === "curve") return t("status.curve");
   return t("status.point");
@@ -2030,6 +2357,15 @@ function setStatus(message) {
 function nextCoachMessage() {
   if (!state.image) {
     return t("coach.start");
+  }
+  if (state.mode === "sketch") {
+    return t("status.sketch");
+  }
+  if (state.mode === "sketch-circle") {
+    return t("status.sketchCircle");
+  }
+  if (state.mode === "circle") {
+    return t("status.circle");
   }
   if (!state.cmPerPixel) {
     if (state.mode === "calibrate") {
@@ -2154,15 +2490,15 @@ function createSampleImage() {
   sctx.strokeStyle = "#20242a";
   sctx.lineWidth = 4;
   drawPolygon(sctx, [
-    [160, 450],
-    [310, 180],
-    [460, 450],
+    [180, 435],
+    [330, 185],
+    [480, 435],
   ]);
   drawPolygon(sctx, [
-    [570, 180],
-    [810, 180],
-    [810, 450],
-    [570, 450],
+    [580, 185],
+    [830, 185],
+    [830, 435],
+    [580, 435],
   ]);
 
   sctx.strokeStyle = "#20242a";
@@ -2185,10 +2521,13 @@ function createSampleImage() {
     state.currentPathLast = null;
     state.currentPathIds = [];
     state.sourceOffset = { x: 0, y: 0 };
+    state.sourceScale = 1;
+    state.sketchStrokes = [];
+    state.sketchCircles = [];
     state.fitViewBefore = null;
-    state.imageOpacity = 0.3;
-    opacityInput.value = "0.3";
-    setShapeOpacity(0.74);
+    state.imageOpacity = DEFAULT_IMAGE_OPACITY;
+    opacityInput.value = String(DEFAULT_IMAGE_OPACITY);
+    setShapeOpacity(DEFAULT_SHAPE_OPACITY);
     state.selected.clear();
     state.selectedFaceIndex = null;
     state.cmPerPixel = 10 / 250;
@@ -2229,6 +2568,9 @@ function createBlankGrid() {
     state.currentPathLast = null;
     state.currentPathIds = [];
     state.sourceOffset = { x: 0, y: 0 };
+    state.sourceScale = 1;
+    state.sketchStrokes = [];
+    state.sketchCircles = [];
     state.fitViewBefore = null;
     state.imageOpacity = 0;
     opacityInput.value = "0";
@@ -2282,22 +2624,33 @@ function loadImageFile(file) {
       state.currentPathLast = null;
       state.currentPathIds = [];
       state.sourceOffset = { x: 0, y: 0 };
+      state.sourceScale = 1;
+      state.sketchStrokes = [];
+      state.sketchCircles = [];
       state.fitViewBefore = null;
-      state.imageOpacity = 0.3;
-      opacityInput.value = "0.3";
-      setShapeOpacity(0.74);
+      state.imageOpacity = DEFAULT_IMAGE_OPACITY;
+      opacityInput.value = String(DEFAULT_IMAGE_OPACITY);
+      setShapeOpacity(DEFAULT_SHAPE_OPACITY);
       state.selected.clear();
       clearSelectedEdges();
       state.selectedFaceIndex = null;
-      state.calibrationClicks = [];
-      state.cmPerPixel = null;
-      state.origin = null;
+      state.showCanvasGrid = true;
+      state.cmPerPixel = 1 / GRID_PAPER_MINOR_PX;
+      state.origin = { x: 80, y: 660 };
+      state.calibrationClicks = [
+        { x: state.origin.x, y: state.origin.y },
+        { x: state.origin.x + GRID_PAPER_MINOR_PX * 10, y: state.origin.y },
+      ];
+      els.knownLength.value = "10";
+      els.unit.value = "cm";
+      els.knownLengthUnit.textContent = "cm";
+      arrowMoveUnit.textContent = "cm";
       clearUndoHistory();
       updateAll();
       fitImage();
       setStatus(state.language === "en"
-        ? "Image loaded. Set the scale first."
-        : "画像を読み込みました。最初に寸法モードでスケールを設定してください。");
+        ? "Image loaded on the grid paper with the default origin and 10 cm guide. Calibrate scale if needed."
+        : "画像を方眼紙の上に読み込みました。方眼紙と同じ原点と10cm四角を表示しています。必要ならスケールを設定してください。");
     };
     img.src = reader.result;
   };
@@ -2449,6 +2802,22 @@ function handlePointerDown(event) {
   const rect = canvas.getBoundingClientRect();
   const screen = { x: event.clientX - rect.left, y: event.clientY - rect.top };
 
+  if (shouldStartViewportPan(event)) {
+    event.preventDefault();
+    state.skipNextCanvasClick = true;
+    canvas.classList.add("is-view-panning");
+    state.drag = {
+      type: "viewport-pan",
+      startX: screen.x,
+      startY: screen.y,
+      viewX: state.view.x,
+      viewY: state.view.y,
+      moved: false,
+    };
+    setStatus(t("status.viewPan"));
+    return;
+  }
+
   if (state.mode === "source") {
     state.drag = {
       type: "source",
@@ -2459,11 +2828,78 @@ function handlePointerDown(event) {
       before: snapshotTrace(),
       moved: false,
     };
-    setStatus("トレース元を移動中です。点や線はそのままです。");
+    setStatus(state.language === "en"
+      ? "Moving the underlay. Use the mouse wheel in this mode to scale only the underlay."
+      : "下敷きを移動中です。このモード中はホイールで下敷きだけ拡大縮小できます。");
     return;
   }
 
-  if (state.mode === "curve" || state.mode === "select") {
+  if (state.mode === "sketch") {
+    const imagePoint = sketchImagePoint(screenToImage(screen.x, screen.y));
+    const before = snapshotTrace();
+    const stroke = {
+      id: crypto.randomUUID(),
+      points: [imagePoint],
+    };
+    state.sketchStrokes.push(stroke);
+    state.drag = {
+      type: "sketch",
+      strokeId: stroke.id,
+      startX: screen.x,
+      startY: screen.y,
+      before,
+      moved: true,
+    };
+    setStatus(t("status.sketch"));
+    draw();
+    return;
+  }
+
+  if (state.mode === "sketch-circle") {
+    const center = sketchImagePoint(screenToImage(screen.x, screen.y));
+    const before = snapshotTrace();
+    const circle = {
+      id: crypto.randomUUID(),
+      cx: center.x,
+      cy: center.y,
+      radius: 0,
+    };
+    state.sketchCircles.push(circle);
+    state.drag = {
+      type: "sketch-circle",
+      circleId: circle.id,
+      startX: screen.x,
+      startY: screen.y,
+      before,
+      moved: false,
+    };
+    setStatus(t("status.sketchCircle"));
+    draw();
+    return;
+  }
+
+  if (state.mode === "circle") {
+    const center = sketchImagePoint(screenToImage(screen.x, screen.y));
+    state.skipNextCanvasClick = true;
+    state.drag = {
+      type: "pattern-circle",
+      center,
+      radius: 0,
+      startX: screen.x,
+      startY: screen.y,
+      before: snapshotTrace(),
+      moved: false,
+    };
+    setStatus(t("status.circleDrawing"));
+    draw();
+    return;
+  }
+
+  const selectedPointHit = (state.mode === "point" || state.mode === "select" || state.mode === "curve")
+    ? hitTestSelectedPoint(screen.x, screen.y)
+    : null;
+
+  if ((state.mode === "curve" || state.mode === "select") && !selectedPointHit) {
     const handleHit = hitTestCurveHandle(screen.x, screen.y);
     if (handleHit) {
       state.skipNextCanvasClick = true;
@@ -2490,10 +2926,21 @@ function handlePointerDown(event) {
   }
 
   if (state.mode === "point" || state.mode === "select" || state.mode === "curve") {
-    const point = hitTestPoint(screen.x, screen.y);
+    const point = selectedPointHit || hitTestPoint(screen.x, screen.y);
     if (point) {
-      state.selected.clear();
-      state.selected.add(point.id);
+      if (event.shiftKey) {
+        if (state.selected.has(point.id)) state.selected.delete(point.id);
+        else state.selected.add(point.id);
+      } else if (!state.selected.has(point.id)) {
+        state.selected.clear();
+        state.selected.add(point.id);
+      }
+      if (state.selected.size === 0) state.selected.add(point.id);
+      const movingPointIds = [...state.selected].filter((id) => state.points.some((candidate) => candidate.id === id));
+      if (!movingPointIds.includes(point.id)) movingPointIds.push(point.id);
+      const movingPoints = state.points
+        .filter((candidate) => movingPointIds.includes(candidate.id))
+        .map((candidate) => ({ id: candidate.id, x: candidate.x, y: candidate.y }));
       clearSelectedEdges();
       state.selectedFaceIndex = null;
       state.drag = {
@@ -2503,11 +2950,45 @@ function handlePointerDown(event) {
         startY: screen.y,
         pointX: point.x,
         pointY: point.y,
-        areaConstraint: state.areaLock ? getAreaLockConstraint(point.id) : null,
+        points: movingPoints,
+        edgeControls: edgeControlSnapshotsForMovingPoints(movingPointIds),
+        areaConstraint: state.areaLock && movingPoints.length === 1 ? getAreaLockConstraint(point.id) : null,
         before: snapshotTrace(),
         moved: false,
       };
-      setStatus(`${point.name}を選択しました。ドラッグまたは方向キーで移動できます。`);
+      setStatus(movingPoints.length > 1
+        ? `${movingPoints.length}点を選択しました。ドラッグでまとめて移動できます。`
+        : `${point.name}を選択しました。ドラッグまたは方向キーで移動できます。`);
+      updateAll();
+      return;
+    }
+  }
+
+  if (state.mode === "point" || state.mode === "select" || state.mode === "curve") {
+    const selectedMoveBounds = selectedPointScreenBounds(POINT_HIT_RADIUS);
+    const selectedPointIds = [...state.selected].filter((id) => state.points.some((candidate) => candidate.id === id));
+    if (selectedPointIds.length > 1 && !selectedExplicitFaceTarget() && pointInsideBox(screen, selectedMoveBounds)) {
+      const movingPoints = state.points
+        .filter((candidate) => selectedPointIds.includes(candidate.id))
+        .map((candidate) => ({ id: candidate.id, x: candidate.x, y: candidate.y }));
+      const anchor = movingPoints[0];
+      state.skipNextCanvasClick = true;
+      clearSelectedEdges();
+      state.selectedFaceIndex = null;
+      state.drag = {
+        type: "point",
+        pointId: anchor.id,
+        startX: screen.x,
+        startY: screen.y,
+        pointX: anchor.x,
+        pointY: anchor.y,
+        points: movingPoints,
+        edgeControls: edgeControlSnapshotsForMovingPoints(selectedPointIds),
+        areaConstraint: null,
+        before: snapshotTrace(),
+        moved: false,
+      };
+      setStatus(`${movingPoints.length}点を選択しました。枠内ドラッグでまとめて移動できます。`);
       updateAll();
       return;
     }
@@ -2570,6 +3051,21 @@ function handlePointerDown(event) {
     const imagePoint = screenToImage(screen.x, screen.y);
     const faceHit = hitTestFace(imagePoint);
     if (!faceHit) {
+      if (state.mode === "select") {
+        state.selectedCurveHandle = null;
+        state.drag = {
+          type: "selection-box",
+          startX: screen.x,
+          startY: screen.y,
+          currentX: screen.x,
+          currentY: screen.y,
+          additive: event.shiftKey,
+          moved: false,
+        };
+        setStatus(t("status.boxSelect"));
+        draw();
+        return;
+      }
       setStatus("移動したい閉じた図の内側をドラッグしてください。");
       return;
     }
@@ -2611,30 +3107,101 @@ function handlePointerMove(event) {
   const dy = y - state.drag.startY;
   if (Math.hypot(dx, dy) > 2) state.drag.moved = true;
 
+  if (state.drag.type === "viewport-pan") {
+    state.view.x = state.drag.viewX + dx;
+    state.view.y = state.drag.viewY + dy;
+    state.fitViewBefore = null;
+    updateFitButton();
+    setStatus(t("status.viewPan"));
+    draw();
+    return;
+  }
+
   if (state.drag.type === "point") {
-    const point = state.points.find((candidate) => candidate.id === state.drag.pointId);
-    if (!point) return;
-    const target = {
-      x: state.drag.pointX + dx / state.view.zoom,
-      y: state.drag.pointY + dy / state.view.zoom,
-    };
-    const constrained = constrainPointToAreaLine(
-      target,
-      { x: state.drag.pointX, y: state.drag.pointY },
-      state.drag.areaConstraint,
-    );
-    const nextPoint = state.drag.areaConstraint ? constrained : snapImagePointToGrid(constrained);
-    point.x = nextPoint.x;
-    point.y = nextPoint.y;
-    setStatus(`${point.name}を移動中です。`);
-    updateAll();
+    const dragPoints = state.drag.points?.length
+      ? state.drag.points
+      : [{ id: state.drag.pointId, x: state.drag.pointX, y: state.drag.pointY }];
+    const anchor = dragPoints.find((snapshot) => snapshot.id === state.drag.pointId) || dragPoints[0];
+    if (!anchor) return;
+    let imageDx = dx / state.view.zoom;
+    let imageDy = dy / state.view.zoom;
+    if (state.drag.areaConstraint) {
+      const target = {
+        x: anchor.x + imageDx,
+        y: anchor.y + imageDy,
+      };
+      const constrained = constrainPointToAreaLine(
+        target,
+        { x: anchor.x, y: anchor.y },
+        state.drag.areaConstraint,
+      );
+      imageDx = constrained.x - anchor.x;
+      imageDy = constrained.y - anchor.y;
+    } else if (state.snapToGrid) {
+      const snappedAnchor = snapImagePointToGrid({
+        x: anchor.x + imageDx,
+        y: anchor.y + imageDy,
+      });
+      imageDx = snappedAnchor.x - anchor.x;
+      imageDy = snappedAnchor.y - anchor.y;
+    }
+    dragPoints.forEach((snapshot) => {
+      const point = state.points.find((candidate) => candidate.id === snapshot.id);
+      if (!point) return;
+      point.x = snapshot.x + imageDx;
+      point.y = snapshot.y + imageDy;
+    });
+    state.drag.edgeControls?.forEach(({ index, control }) => {
+      const edge = state.edges[index];
+      if (edge && control) edge[2] = shiftedEdgeControl(control, imageDx, imageDy);
+    });
+    setStatus(dragPoints.length > 1 ? `${dragPoints.length}点を移動中です。` : `${findPointById(anchor.id)?.name || "点"}を移動中です。`);
+    updateDragPreview();
     return;
   }
 
   if (state.drag.type === "source") {
     state.sourceOffset.x = state.drag.offsetX + dx / state.view.zoom;
     state.sourceOffset.y = state.drag.offsetY + dy / state.view.zoom;
-    setStatus("トレース元を移動中です。点や線はそのままです。");
+    setStatus(state.language === "en"
+      ? "Moving the underlay. Points, lines, origin, and scale square stay fixed."
+      : "下敷きを移動中です。点・線・原点・スケール四角は固定です。");
+    updateDragPreview();
+    return;
+  }
+
+  if (state.drag.type === "sketch") {
+    const stroke = state.sketchStrokes.find((candidate) => candidate.id === state.drag.strokeId);
+    if (!stroke) return;
+    const imagePoint = sketchImagePoint(screenToImage(x, y));
+    appendSketchPoint(stroke, imagePoint);
+    setStatus(t("status.sketch"));
+    draw();
+    return;
+  }
+
+  if (state.drag.type === "sketch-circle") {
+    const circle = state.sketchCircles.find((candidate) => candidate.id === state.drag.circleId);
+    if (!circle) return;
+    const current = sketchImagePoint(screenToImage(x, y));
+    circle.radius = Math.max(0, Math.hypot(current.x - circle.cx, current.y - circle.cy));
+    setStatus(t("status.sketchCircle"));
+    draw();
+    return;
+  }
+
+  if (state.drag.type === "pattern-circle") {
+    const current = sketchImagePoint(screenToImage(x, y));
+    state.drag.radius = Math.max(0, Math.hypot(current.x - state.drag.center.x, current.y - state.drag.center.y));
+    setStatus(t("status.circleDrawing"));
+    draw();
+    return;
+  }
+
+  if (state.drag.type === "selection-box") {
+    state.drag.currentX = x;
+    state.drag.currentY = y;
+    setStatus(t("status.boxSelect"));
     draw();
     return;
   }
@@ -2660,7 +3227,7 @@ function handlePointerMove(event) {
       "c1",
     );
     setStatus(state.drag.areaConstraint ? "面積を保ちながら線を曲げています。" : "線を曲げています。");
-    updateAll();
+    updateDragPreview();
     return;
   }
 
@@ -2683,7 +3250,7 @@ function handlePointerMove(event) {
       state.drag.handle,
     );
     setStatus(state.drag.areaConstraint ? "面積を保ちながらカーブを調整しています。" : "カーブを調整しています。");
-    updateAll();
+    updateDragPreview();
     return;
   }
 
@@ -2701,11 +3268,17 @@ function handlePointerMove(event) {
       if (edge && control) edge[2] = shiftedEdgeControl(control, imageDx, imageDy);
     });
     setStatus("選んだ図を移動中です。");
-    updateAll();
+    updateDragPreview();
     return;
   }
 
   if (state.drag.type === "face-transform") {
+    if (state.areaLock && state.drag.action === "scale") {
+      setStatus(state.language === "en"
+        ? "Keep area is on, so scaling is disabled."
+        : "面積を保つONのため、拡大縮小は無効です。");
+      return;
+    }
     const centerScreen = imageToScreen(state.drag.center.x, state.drag.center.y);
     const angle = Math.atan2(y - centerScreen.y, x - centerScreen.x);
     const distance = Math.max(1, Math.hypot(x - centerScreen.x, y - centerScreen.y));
@@ -2715,26 +3288,56 @@ function handlePointerMove(event) {
     state.selectedFaceIndex = state.drag.faceIndex;
     clearSelectedEdges();
     setStatus(state.drag.action === "rotate" ? "選んだ図を回転中です。" : "選んだ図を拡大縮小中です。");
-    updateAll();
+    updateDragPreview();
   }
 }
 
 function handlePointerUp() {
+  canvas.classList.remove("is-view-panning");
+  if (state.drag?.type === "pattern-circle") {
+    const circleDrag = state.drag;
+    state.drag = null;
+    if (!circleDrag.moved || circleDrag.radius * state.view.zoom < 6) {
+      setStatus(t("status.circleTooSmall"));
+      draw();
+      return;
+    }
+    pushHistory(circleDrag.before);
+    createPatternCircle(circleDrag.center, circleDrag.radius);
+    setStatus(t("status.circleCreated"));
+    updateAll();
+    return;
+  }
   if (state.drag?.moved && state.drag.before) {
     pushHistory(state.drag.before);
     state.skipNextCanvasClick = false;
   }
+  if (state.drag?.type === "selection-box" && state.drag.moved) {
+    applyBoxSelection(state.drag);
+  }
+  if (state.drag?.type === "sketch-circle" && !state.drag.moved) {
+    state.sketchCircles = state.sketchCircles.filter((circle) => circle.id !== state.drag.circleId);
+    draw();
+  }
   if (state.drag?.type === "point" && state.drag.moved) {
-    const point = state.points.find((candidate) => candidate.id === state.drag.pointId);
-    if (point) {
-      setStatus(`${point.name}を移動しました。`);
+    const dragPointCount = state.drag.points?.length || 1;
+    if (dragPointCount > 1) {
+      setStatus(`${dragPointCount}点を移動しました。`);
+    } else {
+      const point = state.points.find((candidate) => candidate.id === state.drag.pointId);
+      if (point) setStatus(`${point.name}を移動しました。`);
     }
   }
   if (state.drag?.type === "pattern" && state.drag.moved) {
     setStatus("選んだ図を移動しました。");
   }
   if (state.drag?.type === "source" && state.drag.moved) {
-    setStatus("トレース元を移動しました。");
+    setStatus(state.language === "en"
+      ? "Moved the underlay. Points, lines, origin, and scale square stayed fixed."
+      : "下敷きを移動しました。点・線・原点・スケール四角は固定です。");
+  }
+  if (state.drag?.type === "viewport-pan" && state.drag.moved) {
+    setStatus(t("status.viewPanned"));
   }
   if (state.drag?.type === "face-transform" && state.drag.moved) {
     setStatus(state.drag.action === "rotate" ? "選んだ図を回転しました。" : "選んだ図を拡大縮小しました。");
@@ -2742,13 +3345,23 @@ function handlePointerUp() {
   if (state.drag?.type === "curve-handle" && state.drag.moved) {
     setStatus("カーブハンドルを移動しました。");
   }
+  if (state.drag?.moved && state.drag.before) {
+    updateAll();
+  }
   window.setTimeout(() => {
     state.drag = null;
   }, 0);
 }
 
 function handleKeyDown(event) {
-  if (document.activeElement?.matches("input, textarea, select")) return;
+  if (event.code === "Space") {
+    if (isTextInputActive()) return;
+    event.preventDefault();
+    state.spacePanActive = true;
+    canvas.classList.add("is-view-panning-ready");
+    return;
+  }
+  if (isTextInputActive()) return;
   if (event.key === "Delete" || event.key === "Backspace") {
     event.preventDefault();
     deleteSelectionFromKeyboard();
@@ -2765,6 +3378,16 @@ function handleKeyDown(event) {
     if (key === "y") {
       event.preventDefault();
       redoTrace();
+      return;
+    }
+    if (key === "c" && selectedExplicitFaceTarget()) {
+      event.preventDefault();
+      copySelectedFace();
+      return;
+    }
+    if (key === "v" && state.shapeClipboard) {
+      event.preventDefault();
+      pasteCopiedFace();
       return;
     }
   }
@@ -2839,15 +3462,35 @@ function handleKeyDown(event) {
   updateAll();
 }
 
+function handleKeyUp(event) {
+  if (event.code !== "Space") return;
+  state.spacePanActive = false;
+  canvas.classList.remove("is-view-panning-ready");
+}
+
 function handleWheel(event) {
   if (!state.image) return;
   event.preventDefault();
-  state.fitViewBefore = null;
-  updateFitButton();
   const rect = canvas.getBoundingClientRect();
   const screen = { x: event.clientX - rect.left, y: event.clientY - rect.top };
-  const before = screenToImage(screen.x, screen.y);
   const factor = event.deltaY < 0 ? 1.08 : 0.92;
+
+  if (state.mode === "source") {
+    const before = snapshotTrace();
+    const changed = scaleSourceUnderlayAt(screen, factor);
+    if (!changed) return;
+    pushHistory(before);
+    setStatus(state.language === "en"
+      ? `Underlay scale: ${Math.round(state.sourceScale * 100)}%. Points, lines, origin, and scale square stay fixed.`
+      : `下敷き倍率: ${Math.round(state.sourceScale * 100)}%。点・線・原点・スケール四角は固定です。`);
+    updateExports();
+    draw();
+    return;
+  }
+
+  state.fitViewBefore = null;
+  updateFitButton();
+  const before = screenToImage(screen.x, screen.y);
   state.view.zoom = Math.min(12, Math.max(0.04, state.view.zoom * factor));
   state.view.x = screen.x - before.x * state.view.zoom;
   state.view.y = screen.y - before.y * state.view.zoom;
@@ -2871,10 +3514,13 @@ function draw() {
     ctx.globalAlpha = state.imageOpacity;
     ctx.translate(state.view.x, state.view.y);
     ctx.scale(state.view.zoom, state.view.zoom);
-    ctx.drawImage(state.image, state.sourceOffset.x, state.sourceOffset.y);
+    const sourceRect = sourceImageRect();
+    ctx.drawImage(state.image, sourceRect.x, sourceRect.y, sourceRect.width, sourceRect.height);
     ctx.restore();
   }
 
+  drawSketchGuides();
+  drawPatternCirclePreview();
   drawFaces();
   if (state.showGuides) {
     drawOrigin();
@@ -2890,7 +3536,85 @@ function draw() {
     drawPoints();
     if (state.showScaleReference) drawScaleReferenceSquare();
   }
+  drawSelectionBox();
   drawLoupe();
+}
+
+function drawSketchGuides() {
+  if (state.sketchStrokes.length === 0 && state.sketchCircles.length === 0) return;
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = "rgba(214, 218, 224, 0.58)";
+  ctx.fillStyle = "rgba(214, 218, 224, 0.58)";
+  ctx.lineWidth = 2.2;
+  state.sketchCircles.forEach((circle) => {
+    if (!Number.isFinite(circle.cx) || !Number.isFinite(circle.cy) || !Number.isFinite(circle.radius)) return;
+    if (circle.radius <= 0) return;
+    const center = imageToScreen(circle.cx, circle.cy);
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, circle.radius * state.view.zoom, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+  state.sketchStrokes.forEach((stroke) => {
+    const points = Array.isArray(stroke.points) ? stroke.points : [];
+    if (points.length === 0) return;
+    const first = imageToScreen(points[0].x, points[0].y);
+    if (points.length === 1) {
+      ctx.beginPath();
+      ctx.arc(first.x, first.y, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+    ctx.beginPath();
+    ctx.moveTo(first.x, first.y);
+    points.slice(1).forEach((point) => {
+      const screen = imageToScreen(point.x, point.y);
+      ctx.lineTo(screen.x, screen.y);
+    });
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+
+function drawPatternCirclePreview() {
+  if (state.drag?.type !== "pattern-circle" || state.drag.radius <= 0) return;
+  const center = imageToScreen(state.drag.center.x, state.drag.center.y);
+  const radius = state.drag.radius * state.view.zoom;
+  ctx.save();
+  ctx.setLineDash([7, 5]);
+  ctx.lineWidth = 2.2;
+  ctx.strokeStyle = DRAW_COLORS.line;
+  ctx.fillStyle = "rgba(242, 192, 55, 0.12)";
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, 4, 0, Math.PI * 2);
+  ctx.fillStyle = DRAW_COLORS.selected;
+  ctx.fill();
+  ctx.strokeStyle = DRAW_COLORS.pointStroke;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawSelectionBox() {
+  if (state.drag?.type !== "selection-box") return;
+  const box = screenBoxFromDrag(state.drag);
+  const width = box.maxX - box.minX;
+  const height = box.maxY - box.minY;
+  if (width < 1 || height < 1) return;
+
+  ctx.save();
+  ctx.fillStyle = "rgba(242, 192, 55, 0.12)";
+  ctx.strokeStyle = "rgba(242, 192, 55, 0.92)";
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([6, 4]);
+  ctx.fillRect(box.minX, box.minY, width, height);
+  ctx.strokeRect(box.minX, box.minY, width, height);
+  ctx.restore();
 }
 
 function selectedFaceTransformGeometry() {
@@ -2953,7 +3677,9 @@ function drawFaceTransformHandles() {
   ctx.arc(center.x, center.y, 4, 0, Math.PI * 2);
   ctx.fill();
 
-  scaleHandles.forEach((handle) => drawTransformHandle(handle, DRAW_COLORS.handleFill, DRAW_COLORS.handle));
+  if (!state.areaLock) {
+    scaleHandles.forEach((handle) => drawTransformHandle(handle, DRAW_COLORS.handleFill, DRAW_COLORS.handle));
+  }
   ctx.beginPath();
   ctx.arc(rotate.x, rotate.y, 10, 0, Math.PI * 2);
   ctx.fillStyle = DRAW_COLORS.handleFill;
@@ -2986,10 +3712,12 @@ function hitTestFaceTransformHandle(screenX, screenY) {
     return { type: "rotate", geometry };
   }
 
-  const scaleHandle = geometry.scaleHandles.find((handle) => (
-    Math.hypot(screenX - handle.x, screenY - handle.y) <= FACE_HANDLE_HIT_RADIUS
-  ));
-  if (scaleHandle) return { type: "scale", handle: scaleHandle.key, geometry };
+  if (!state.areaLock) {
+    const scaleHandle = geometry.scaleHandles.find((handle) => (
+      Math.hypot(screenX - handle.x, screenY - handle.y) <= FACE_HANDLE_HIT_RADIUS
+    ));
+    if (scaleHandle) return { type: "scale", handle: scaleHandle.key, geometry };
+  }
   return null;
 }
 
@@ -3127,7 +3855,8 @@ function drawLoupe() {
   loupeCtx.translate(width / 2, height / 2);
   loupeCtx.scale(zoom, zoom);
   loupeCtx.translate(-focus.x, -focus.y);
-  loupeCtx.drawImage(state.image, state.sourceOffset.x, state.sourceOffset.y);
+  const sourceRect = sourceImageRect();
+  loupeCtx.drawImage(state.image, sourceRect.x, sourceRect.y, sourceRect.width, sourceRect.height);
   loupeCtx.restore();
 
   drawLoupeFaces(focus, zoom, width, height);
@@ -3215,7 +3944,7 @@ function drawLoupePoints(focus, zoom, width, height) {
 
 function drawLoupeCrosshair(width, height) {
   loupeCtx.save();
-  loupeCtx.strokeStyle = DRAW_COLORS.selected;
+  loupeCtx.strokeStyle = DRAW_COLORS.loupeTarget;
   loupeCtx.lineWidth = 2;
   loupeCtx.beginPath();
   loupeCtx.moveTo(width / 2 - 18, height / 2);
@@ -3226,7 +3955,7 @@ function drawLoupeCrosshair(width, height) {
   loupeCtx.beginPath();
   loupeCtx.arc(width / 2, height / 2, 5, 0, Math.PI * 2);
   loupeCtx.stroke();
-  loupeCtx.fillStyle = DRAW_COLORS.selected;
+  loupeCtx.fillStyle = DRAW_COLORS.loupeTarget;
   loupeCtx.beginPath();
   loupeCtx.arc(width / 2, height / 2, 2, 0, Math.PI * 2);
   loupeCtx.fill();
@@ -3241,10 +3970,23 @@ function changeLoupeZoom(delta) {
   drawLoupe();
 }
 
+function clearSketchGuides() {
+  if (state.sketchStrokes.length === 0 && state.sketchCircles.length === 0) {
+    setStatus(t("status.noSketch"));
+    return;
+  }
+  pushHistory();
+  state.sketchStrokes = [];
+  state.sketchCircles = [];
+  setStatus(t("status.sketchCleared"));
+  updateAll();
+}
+
 function toggleAreaLock() {
   state.areaLock = !state.areaLock;
   areaLockButton.classList.toggle("active", state.areaLock);
   setStatus(state.areaLock ? "面積を保つ: オン" : "面積を保つ: オフ");
+  draw();
 }
 
 function toggleGuides() {
@@ -3255,6 +3997,19 @@ function toggleGuides() {
     state.showGuides
       ? (state.language === "en" ? "Guides, points, and handles are visible." : "点・ハンドル・補助線を表示しました。")
       : (state.language === "en" ? "Guides, points, and handles are hidden." : "点・ハンドル・補助線を隠しました。図形の形だけ確認できます。")
+  );
+  draw();
+}
+
+function togglePointLabels() {
+  state.showPointLabels = !state.showPointLabels;
+  localStorage.setItem("quackTraceShowPointLabels", state.showPointLabels ? "true" : "false");
+  pointLabelToggleButton.textContent = state.showPointLabels ? t("action.hidePointLabels") : t("action.showPointLabels");
+  pointLabelToggleButton.classList.toggle("active", !state.showPointLabels);
+  setStatus(
+    state.showPointLabels
+      ? (state.language === "en" ? "Point names are visible." : "ポイント番号を表示しました。")
+      : (state.language === "en" ? "Point names are hidden. Point dots remain visible." : "ポイント番号を非表示にしました。点の丸は表示したままです。")
   );
   draw();
 }
@@ -3415,6 +4170,153 @@ function selectedExplicitFaceTarget() {
     .map((face, index) => ({ face, index }))
     .filter(({ face }) => face.length >= 3 && face.every((id) => state.selected.has(id)));
   return selectedFaces[0] || null;
+}
+
+function faceBoundaryEdges(face) {
+  return face
+    .map((fromId, index) => {
+      const toId = face[(index + 1) % face.length];
+      const edgeIndex = findEdgeIndexBetween(fromId, toId);
+      return {
+        fromId,
+        toId,
+        edgeIndex,
+        edge: edgeIndex >= 0 ? state.edges[edgeIndex] : null,
+      };
+    })
+    .filter(({ edge }) => edge);
+}
+
+function mirrorPointX(point, centerX) {
+  return { x: centerX - (point.x - centerX), y: point.y };
+}
+
+function mirrorEdgeControlX(control, centerX) {
+  if (!control) return null;
+  const mirrored = structuredClone(control);
+  if (mirrored.c1 && mirrored.c2) {
+    mirrored.c1 = mirrorPointX(mirrored.c1, centerX);
+    mirrored.c2 = mirrorPointX(mirrored.c2, centerX);
+    return mirrored;
+  }
+  if (typeof mirrored.x === "number" && typeof mirrored.y === "number") {
+    return mirrorPointX(mirrored, centerX);
+  }
+  return mirrored;
+}
+
+function shapePasteOffset() {
+  if (state.cmPerPixel) return 2 / state.cmPerPixel;
+  return 32 / Math.max(0.2, state.view.zoom);
+}
+
+function copySelectedFace() {
+  const target = selectedExplicitFaceTarget();
+  if (!target) {
+    setStatus(state.language === "en"
+      ? "Select a closed shape before copying."
+      : "コピーしたい閉じた図を先に選択してください。");
+    updateFaceActionButtons();
+    return;
+  }
+
+  const pointMap = new Map(state.points.map((point) => [point.id, point]));
+  const sourcePoints = target.face.map((id) => pointMap.get(id)).filter(Boolean);
+  state.shapeClipboard = {
+    points: sourcePoints.map((point) => ({
+      sourceId: point.id,
+      x: point.x,
+      y: point.y,
+    })),
+    face: [...target.face],
+    edges: faceBoundaryEdges(target.face).map(({ fromId, toId, edge }) => {
+      const directedControl = directedEdgeControls(edge, fromId, toId) || edgeControl(edge);
+      return {
+        fromId,
+        toId,
+        control: directedControl ? structuredClone(directedControl) : null,
+      };
+    }),
+    pasteCount: 0,
+  };
+  setStatus(state.language === "en" ? "Copied the selected shape." : "選択した図をコピーしました。");
+  updateFaceActionButtons();
+}
+
+function pasteCopiedFace() {
+  if (!state.shapeClipboard) {
+    setStatus(state.language === "en" ? "Copy a closed shape first." : "先に閉じた図をコピーしてください。");
+    updateFaceActionButtons();
+    return;
+  }
+
+  pushHistory();
+  const pasteCount = state.shapeClipboard.pasteCount + 1;
+  state.shapeClipboard.pasteCount = pasteCount;
+  const offset = shapePasteOffset() * pasteCount;
+  const idMap = new Map();
+  const newPoints = state.shapeClipboard.points.map((source) => {
+    const id = crypto.randomUUID();
+    idMap.set(source.sourceId, id);
+    return {
+      id,
+      name: nextPointName(),
+      x: source.x + offset,
+      y: source.y + offset,
+    };
+  });
+
+  state.points.push(...newPoints);
+  state.shapeClipboard.edges.forEach(({ fromId, toId, control }) => {
+    const nextFrom = idMap.get(fromId);
+    const nextTo = idMap.get(toId);
+    if (!nextFrom || !nextTo) return;
+    const nextControl = shiftedEdgeControl(control, offset, offset);
+    state.edges.push(nextControl ? [nextFrom, nextTo, nextControl] : [nextFrom, nextTo]);
+  });
+
+  const newFace = state.shapeClipboard.face.map((id) => idMap.get(id)).filter(Boolean);
+  if (newFace.length >= 3) {
+    state.selectedFaceIndex = state.faces.push(newFace) - 1;
+    state.selected = new Set(newFace);
+  }
+  state.currentPathLast = null;
+  state.currentPathIds = [];
+  clearSelectedEdges();
+  updateAll();
+  setStatus(state.language === "en" ? "Pasted the copied shape." : "コピーした図を貼り付けました。");
+}
+
+function flipSelectedFaceHorizontal() {
+  const target = selectedExplicitFaceTarget();
+  if (!target) {
+    setStatus(state.language === "en"
+      ? "Select a closed shape before flipping."
+      : "左右反転したい閉じた図を先に選択してください。");
+    updateFaceActionButtons();
+    return;
+  }
+
+  const points = target.face.map((id) => findPointById(id)).filter(Boolean);
+  if (points.length < 3) return;
+  pushHistory();
+  const center = polygonCentroidFromPoints(points);
+  const facePointIds = new Set(target.face);
+  state.points.forEach((point) => {
+    if (!facePointIds.has(point.id)) return;
+    point.x = center.x - (point.x - center.x);
+  });
+  faceBoundaryEdges(target.face).forEach(({ edge }) => {
+    const mirrored = mirrorEdgeControlX(edgeControl(edge), center.x);
+    if (mirrored) edge[2] = mirrored;
+  });
+  updateAll();
+  setStatus(state.language === "en" ? "Flipped the selected shape." : "選択した図を左右反転しました。");
+}
+
+function updateFaceActionButtons() {
+  const hasSelectedFace = Boolean(selectedExplicitFaceTarget());
+  flipFaceButton.disabled = !hasSelectedFace;
 }
 
 function deleteSelectedFace() {
@@ -3634,7 +4536,7 @@ function drawHatchLines(facePoints) {
 function drawCalibration() {
   if (state.calibrationClicks.length === 0) return;
   if (state.cmPerPixel && state.mode !== "calibrate") return;
-  const points = state.calibrationClicks.map((point) => sourceImageToScreen(point.x, point.y));
+  const points = state.calibrationClicks.map((point) => imageToScreen(point.x, point.y));
   ctx.save();
   ctx.strokeStyle = DRAW_COLORS.selected;
   ctx.fillStyle = DRAW_COLORS.selected;
@@ -3677,7 +4579,7 @@ function drawCalibration() {
 
 function drawOrigin() {
   if (!state.origin) return;
-  const origin = sourceImageToScreen(state.origin.x, state.origin.y);
+  const origin = imageToScreen(state.origin.x, state.origin.y);
   ctx.save();
   ctx.setLineDash([7, 6]);
   ctx.strokeStyle = DRAW_COLORS.originGuide;
@@ -3724,7 +4626,7 @@ function drawScaleReferenceSquare() {
   let y = size.height - margin - labelHeight - displaySize;
 
   if (state.origin) {
-    const origin = sourceImageToScreen(state.origin.x, state.origin.y);
+    const origin = imageToScreen(state.origin.x, state.origin.y);
     const anchorGap = 18;
     const anchoredX = origin.x + anchorGap;
     const anchoredY = origin.y - displaySize - anchorGap;
@@ -3915,6 +4817,7 @@ function drawPoints() {
     ctx.arc(screen.x, screen.y, isSelected ? 7 : 6, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
+    if (!state.showPointLabels) return;
     const label = `${index + 1}:${point.name}`;
     ctx.lineWidth = 4;
     ctx.strokeStyle = DRAW_COLORS.labelUnderlay;
@@ -3981,6 +4884,8 @@ function deletePoint(id) {
 
 function resetTrace() {
   if (hasTraceContent()) pushHistory();
+  state.sketchStrokes = [];
+  state.sketchCircles = [];
   state.points = [];
   state.edges = [];
   state.faces = [];
@@ -4017,20 +4922,10 @@ function closeSelectedShape() {
     .filter(Boolean);
   const shapePoints = selectedPoints.length >= 3 ? selectedPoints : currentPathPoints;
   if (shapePoints.length < 3) {
-    setStatus("閉じるには3点以上の点が必要です。");
+    setStatus(state.language === "en" ? "Close needs at least 3 points." : "閉じるには3点以上の点が必要です。");
     return;
   }
   closeShapePoints(shapePoints);
-  return;
-  shapePoints.slice(0, -1).forEach((point, index) => {
-    addEdge(point.id, shapePoints[index + 1].id);
-  });
-  addEdge(shapePoints[shapePoints.length - 1].id, shapePoints[0].id);
-  addFace(shapePoints.map((point) => point.id));
-  state.currentPathLast = null;
-  state.selected.clear();
-  setStatus("形を閉じました。閉じた面は薄い水色とハッチングで表示します。");
-  updateAll();
 }
 
 function closeCurrentPath() {
@@ -4038,7 +4933,7 @@ function closeCurrentPath() {
     .map((id) => state.points.find((point) => point.id === id))
     .filter(Boolean);
   if (shapePoints.length < 3) {
-    setStatus("Close needs at least 3 points.");
+    setStatus(state.language === "en" ? "Close needs at least 3 points." : "閉じるには3点以上の点が必要です。");
     return;
   }
   closeShapePoints(shapePoints);
@@ -4057,8 +4952,60 @@ function closeShapePoints(shapePoints) {
   state.selected = new Set(faceIds);
   clearSelectedEdges();
   state.lastPointClick = null;
-  setStatus("Closed shape. Next point starts a new shape.");
+  setStatus(state.language === "en"
+    ? "Closed shape. Next point starts a new shape."
+    : "形を閉じました。次の点から新しい図を始めます。");
   updateAll();
+}
+
+function createPatternCircle(center, radius) {
+  if (!Number.isFinite(center?.x) || !Number.isFinite(center?.y) || !Number.isFinite(radius) || radius <= 0) {
+    return false;
+  }
+  const controlRatio = 0.5522847498307936;
+  const pointSpecs = [
+    { x: center.x, y: center.y - radius },
+    { x: center.x + radius, y: center.y },
+    { x: center.x, y: center.y + radius },
+    { x: center.x - radius, y: center.y },
+  ];
+  const circlePoints = pointSpecs.map((spec) => ({
+    id: crypto.randomUUID(),
+    name: nextPointName(),
+    x: spec.x,
+    y: spec.y,
+  }));
+  const [top, right, bottom, left] = circlePoints;
+  const k = radius * controlRatio;
+  const circleEdges = [
+    [top.id, right.id, {
+      c1: { x: center.x + k, y: center.y - radius },
+      c2: { x: center.x + radius, y: center.y - k },
+    }],
+    [right.id, bottom.id, {
+      c1: { x: center.x + radius, y: center.y + k },
+      c2: { x: center.x + k, y: center.y + radius },
+    }],
+    [bottom.id, left.id, {
+      c1: { x: center.x - k, y: center.y + radius },
+      c2: { x: center.x - radius, y: center.y + k },
+    }],
+    [left.id, top.id, {
+      c1: { x: center.x - radius, y: center.y - k },
+      c2: { x: center.x - k, y: center.y - radius },
+    }],
+  ];
+
+  state.points.push(...circlePoints);
+  state.edges.push(...circleEdges);
+  const faceIds = circlePoints.map((point) => point.id);
+  state.selectedFaceIndex = addFace(faceIds);
+  state.selected = new Set(faceIds);
+  clearSelectedEdges();
+  state.currentPathLast = null;
+  state.currentPathIds = [];
+  state.lastPointClick = null;
+  return true;
 }
 
 function addEdge(fromId, toId) {
@@ -4176,6 +5123,13 @@ function exportObject() {
     app: "Quack Trace",
     image: state.imageName,
     unit,
+    underlay: {
+      offset_image_px: {
+        x: roundCoord(state.sourceOffset.x),
+        y: roundCoord(state.sourceOffset.y),
+      },
+      scale: roundCoord(state.sourceScale || 1),
+    },
     scale: {
       cm_per_pixel: state.cmPerPixel ? roundCoord(state.cmPerPixel) : null,
       origin_image_px: state.origin ? { x: roundCoord(state.origin.x), y: roundCoord(state.origin.y) } : null,
@@ -4197,6 +5151,12 @@ function exportBlockReason() {
   return "";
 }
 
+function printBlockReason() {
+  if (!state.cmPerPixel) return t("print.needScale");
+  if (state.edges.length === 0) return t("print.needLine");
+  return "";
+}
+
 function updateExportReadiness() {
   const reason = exportBlockReason();
   const exportReady = !reason;
@@ -4204,6 +5164,9 @@ function updateExportReadiness() {
     button.disabled = !exportReady;
     button.title = exportReady ? "" : reason;
   });
+  const printReason = printBlockReason();
+  printPdfButton.disabled = Boolean(printReason);
+  printPdfButton.title = printReason || t("export.printPdfTitle");
   exportStatus.className = `export-status ${exportReady ? "ready" : "waiting"}`;
   exportStatus.innerHTML = exportReady
     ? `<strong>${escapeHtml(t("export.ready"))}</strong>`
@@ -4284,6 +5247,10 @@ function importQuackTraceJson(data) {
   const originY = finiteNumber(importedOrigin?.y);
   const origin = originX === null || originY === null ? null : { x: originX, y: originY };
   const yUp = data.scale?.y_axis === "up";
+  const importedUnderlayOffset = data.underlay?.offset_image_px;
+  const underlayOffsetX = finiteNumber(importedUnderlayOffset?.x);
+  const underlayOffsetY = finiteNumber(importedUnderlayOffset?.y);
+  const underlayScale = Math.min(MAX_SOURCE_SCALE, Math.max(MIN_SOURCE_SCALE, finiteNumber(data.underlay?.scale) || 1));
 
   const importedPoints = data.points.map((source, index) => {
     const imageX = finiteNumber(source.image_x_px);
@@ -4332,7 +5299,13 @@ function importQuackTraceJson(data) {
   state.cmPerPixel = cmPerPixel;
   state.origin = origin;
   state.yUp = yUp;
-  state.sourceOffset = { x: 0, y: 0 };
+  state.sourceOffset = {
+    x: underlayOffsetX ?? 0,
+    y: underlayOffsetY ?? 0,
+  };
+  state.sourceScale = underlayScale;
+  state.sketchStrokes = [];
+  state.sketchCircles = [];
   state.fitViewBefore = null;
   state.lastPointClick = null;
   els.unit.value = unit;
@@ -4347,6 +5320,335 @@ function importQuackTraceJson(data) {
   setStatus(state.language === "en"
     ? `Imported JSON. Restored ${importedPoints.length} points / ${importedFaces.length} faces.`
     : `JSONを読み込みました。${importedPoints.length}点 / ${importedFaces.length}面を復元しました。`);
+}
+
+function parseDxfPairs(text) {
+  const lines = String(text).replace(/^\uFEFF/, "").split(/\r?\n/);
+  const pairs = [];
+  for (let index = 0; index < lines.length - 1; index += 2) {
+    const code = Number(String(lines[index]).trim());
+    if (!Number.isFinite(code)) continue;
+    pairs.push({ code, value: String(lines[index + 1]).trim() });
+  }
+  return pairs;
+}
+
+function collectDxfEntityPairs(pairs, startIndex) {
+  const entityPairs = [];
+  let index = startIndex + 1;
+  while (index < pairs.length && pairs[index].code !== 0) {
+    entityPairs.push(pairs[index]);
+    index += 1;
+  }
+  return { pairs: entityPairs, nextIndex: index - 1 };
+}
+
+function parseDxfPolylineEntity(pairs, startIndex) {
+  const header = [];
+  const vertices = [];
+  let currentVertex = null;
+  let index = startIndex + 1;
+
+  for (; index < pairs.length; index += 1) {
+    const pair = pairs[index];
+    if (pair.code === 0) {
+      const marker = pair.value.toUpperCase();
+      if (marker === "VERTEX") {
+        if (currentVertex) vertices.push(currentVertex);
+        currentVertex = [];
+        continue;
+      }
+      if (marker === "SEQEND") {
+        if (currentVertex) vertices.push(currentVertex);
+        break;
+      }
+      if (currentVertex) vertices.push(currentVertex);
+      index -= 1;
+      break;
+    }
+    if (currentVertex) currentVertex.push(pair);
+    else header.push(pair);
+  }
+
+  return { entity: { type: "POLYLINE", pairs: header, vertices }, nextIndex: index };
+}
+
+function parseDxfEntities(text) {
+  const pairs = parseDxfPairs(text);
+  const entities = [];
+  let inEntities = false;
+
+  for (let index = 0; index < pairs.length; index += 1) {
+    const pair = pairs[index];
+    if (pair.code !== 0) continue;
+
+    const marker = pair.value.toUpperCase();
+    if (marker === "SECTION") {
+      inEntities = pairs[index + 1]?.code === 2 && pairs[index + 1].value.toUpperCase() === "ENTITIES";
+      continue;
+    }
+    if (marker === "ENDSEC") {
+      inEntities = false;
+      continue;
+    }
+    if (!inEntities) continue;
+
+    if (marker === "POLYLINE") {
+      const parsed = parseDxfPolylineEntity(pairs, index);
+      entities.push(parsed.entity);
+      index = parsed.nextIndex;
+      continue;
+    }
+
+    if (["LINE", "LWPOLYLINE", "CIRCLE", "ARC", "SPLINE"].includes(marker)) {
+      const collected = collectDxfEntityPairs(pairs, index);
+      entities.push({ type: marker, pairs: collected.pairs });
+      index = collected.nextIndex;
+    }
+  }
+
+  return entities;
+}
+
+function dxfNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function dxfFirstNumber(pairs, code) {
+  const pair = pairs.find((candidate) => candidate.code === code);
+  return pair ? dxfNumber(pair.value) : null;
+}
+
+function dxfFlag(pairs, code) {
+  return dxfFirstNumber(pairs, code) || 0;
+}
+
+function dxfPointSequence(pairs, xCode = 10, yCode = 20) {
+  const points = [];
+  let current = null;
+  pairs.forEach((pair) => {
+    if (pair.code === xCode) {
+      if (current && Number.isFinite(current.x) && Number.isFinite(current.y)) points.push(current);
+      current = { x: dxfNumber(pair.value), y: null, bulge: 0 };
+    } else if (pair.code === yCode && current) {
+      current.y = dxfNumber(pair.value);
+    } else if (pair.code === 42 && current) {
+      current.bulge = dxfNumber(pair.value) || 0;
+    }
+  });
+  if (current && Number.isFinite(current.x) && Number.isFinite(current.y)) points.push(current);
+  return points;
+}
+
+function sameDxfPoint(a, b, tolerance = 0.0001) {
+  return Boolean(a && b && Math.hypot(a.x - b.x, a.y - b.y) <= tolerance);
+}
+
+function sampleDxfBulgeSegment(from, to, bulge) {
+  if (!Number.isFinite(bulge) || Math.abs(bulge) < 0.000001) return [to];
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const chord = Math.hypot(dx, dy);
+  if (chord === 0) return [];
+
+  const theta = 4 * Math.atan(bulge);
+  const radius = chord / (2 * Math.sin(Math.abs(theta) / 2));
+  const ux = dx / chord;
+  const uy = dy / chord;
+  const normal = { x: -uy, y: ux };
+  const midpoint = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
+  const centerDistance = radius * Math.cos(theta / 2) * Math.sign(bulge);
+  const center = {
+    x: midpoint.x + normal.x * centerDistance,
+    y: midpoint.y + normal.y * centerDistance,
+  };
+  const startAngle = Math.atan2(from.y - center.y, from.x - center.x);
+  let endAngle = Math.atan2(to.y - center.y, to.x - center.x);
+  let delta = endAngle - startAngle;
+  if (bulge > 0 && delta <= 0) delta += Math.PI * 2;
+  if (bulge < 0 && delta >= 0) delta -= Math.PI * 2;
+  endAngle = startAngle + delta;
+
+  const steps = Math.max(4, Math.ceil(Math.abs(delta) / (Math.PI / 18)));
+  const samples = [];
+  for (let step = 1; step <= steps; step += 1) {
+    const angle = startAngle + (endAngle - startAngle) * (step / steps);
+    samples.push({
+      x: center.x + Math.cos(angle) * Math.abs(radius),
+      y: center.y + Math.sin(angle) * Math.abs(radius),
+    });
+  }
+  return samples;
+}
+
+function dxfPolylinePath(vertices, closed) {
+  if (vertices.length < 2) return [];
+  const points = [{ x: vertices[0].x, y: vertices[0].y }];
+  const segmentCount = closed ? vertices.length : vertices.length - 1;
+  for (let index = 0; index < segmentCount; index += 1) {
+    const from = vertices[index];
+    const to = vertices[(index + 1) % vertices.length];
+    points.push(...sampleDxfBulgeSegment(from, to, from.bulge || 0));
+  }
+  if (closed && sameDxfPoint(points[0], points[points.length - 1])) points.pop();
+  return points;
+}
+
+function sampleDxfArc(center, radius, startDegrees, endDegrees) {
+  if (!center || !Number.isFinite(radius) || radius <= 0) return [];
+  let start = (startDegrees * Math.PI) / 180;
+  let end = (endDegrees * Math.PI) / 180;
+  while (end < start) end += Math.PI * 2;
+  const steps = Math.max(4, Math.ceil((end - start) / (Math.PI / 18)));
+  const points = [];
+  for (let step = 0; step <= steps; step += 1) {
+    const angle = start + (end - start) * (step / steps);
+    points.push({ x: center.x + Math.cos(angle) * radius, y: center.y + Math.sin(angle) * radius });
+  }
+  return points;
+}
+
+function dxfEntityToPath(entity) {
+  const pairs = entity.pairs || [];
+  if (entity.type === "LINE") {
+    const x1 = dxfFirstNumber(pairs, 10);
+    const y1 = dxfFirstNumber(pairs, 20);
+    const x2 = dxfFirstNumber(pairs, 11);
+    const y2 = dxfFirstNumber(pairs, 21);
+    if ([x1, y1, x2, y2].some((value) => value === null)) return null;
+    return { points: [{ x: x1, y: y1 }, { x: x2, y: y2 }], closed: false };
+  }
+
+  if (entity.type === "LWPOLYLINE") {
+    const vertices = dxfPointSequence(pairs);
+    const closed = Boolean(dxfFlag(pairs, 70) & 1) || sameDxfPoint(vertices[0], vertices[vertices.length - 1]);
+    return { points: dxfPolylinePath(vertices, closed), closed };
+  }
+
+  if (entity.type === "POLYLINE") {
+    const vertices = (entity.vertices || []).map((vertexPairs) => dxfPointSequence(vertexPairs)[0]).filter(Boolean);
+    const closed = Boolean(dxfFlag(pairs, 70) & 1) || sameDxfPoint(vertices[0], vertices[vertices.length - 1]);
+    return { points: dxfPolylinePath(vertices, closed), closed };
+  }
+
+  if (entity.type === "CIRCLE" || entity.type === "ARC") {
+    const center = { x: dxfFirstNumber(pairs, 10), y: dxfFirstNumber(pairs, 20) };
+    const radius = dxfFirstNumber(pairs, 40);
+    if (center.x === null || center.y === null || radius === null) return null;
+    if (entity.type === "CIRCLE") {
+      return { points: sampleDxfArc(center, radius, 0, 360).slice(0, -1), closed: true };
+    }
+    const start = dxfFirstNumber(pairs, 50) ?? 0;
+    const end = dxfFirstNumber(pairs, 51) ?? 0;
+    return { points: sampleDxfArc(center, radius, start, end), closed: false };
+  }
+
+  if (entity.type === "SPLINE") {
+    const fitPoints = dxfPointSequence(pairs, 11, 21);
+    const controlPoints = dxfPointSequence(pairs, 10, 20);
+    const points = fitPoints.length >= 2 ? fitPoints : controlPoints;
+    return { points, closed: Boolean(dxfFlag(pairs, 70) & 1) };
+  }
+
+  return null;
+}
+
+function createTransparentWorkspace(width, height) {
+  const grid = document.createElement("canvas");
+  grid.width = Math.max(320, Math.ceil(width));
+  grid.height = Math.max(240, Math.ceil(height));
+  return grid;
+}
+
+function importDxfText(text, fileName = "imported-dxf") {
+  const paths = parseDxfEntities(text)
+    .map(dxfEntityToPath)
+    .filter((path) => path && path.points.length >= 2);
+  if (paths.length === 0) {
+    throw new Error("読み込めるDXF図形がありません。LINE / LWPOLYLINE / POLYLINE / ARC / CIRCLE を確認してください。");
+  }
+
+  const allPoints = paths.flatMap((path) => path.points);
+  const minX = Math.min(...allPoints.map((point) => point.x));
+  const maxX = Math.max(...allPoints.map((point) => point.x));
+  const minY = Math.min(...allPoints.map((point) => point.y));
+  const maxY = Math.max(...allPoints.map((point) => point.y));
+  const margin = 80;
+  const origin = { x: margin - minX, y: margin + maxY };
+  const cmPerPixel = 0.1;
+  const pointMap = new Map();
+  const importedPoints = [];
+  const importedEdges = [];
+  const importedFaces = [];
+
+  function imagePointFromDxf(point) {
+    return { x: origin.x + point.x, y: origin.y - point.y };
+  }
+
+  function addImportedPoint(dxfPoint) {
+    const imagePoint = imagePointFromDxf(dxfPoint);
+    const key = `${imagePoint.x.toFixed(4)},${imagePoint.y.toFixed(4)}`;
+    if (pointMap.has(key)) return pointMap.get(key);
+    const point = {
+      id: crypto.randomUUID(),
+      name: `P${importedPoints.length + 1}`,
+      x: imagePoint.x,
+      y: imagePoint.y,
+    };
+    importedPoints.push(point);
+    pointMap.set(key, point);
+    return point;
+  }
+
+  paths.forEach((path) => {
+    let pathPoints = [...path.points];
+    if (path.closed && sameDxfPoint(pathPoints[0], pathPoints[pathPoints.length - 1])) pathPoints = pathPoints.slice(0, -1);
+    const ids = pathPoints.map((point) => addImportedPoint(point).id);
+    ids.forEach((id, index) => {
+      const nextId = ids[index + 1];
+      if (nextId && id !== nextId) importedEdges.push([id, nextId]);
+    });
+    if (path.closed && ids.length >= 3) {
+      if (ids[ids.length - 1] !== ids[0]) importedEdges.push([ids[ids.length - 1], ids[0]]);
+      importedFaces.push(ids);
+    }
+  });
+
+  state.imageName = fileName.replace(/\.[^.]+$/, "") || "imported-dxf";
+  state.image = createTransparentWorkspace((maxX - minX) + margin * 2, (maxY - minY) + margin * 2);
+  state.points = importedPoints;
+  state.edges = importedEdges;
+  state.faces = importedFaces;
+  state.currentPathLast = null;
+  state.currentPathIds = [];
+  state.selected.clear();
+  clearSelectedEdges();
+  state.selectedFaceIndex = null;
+  state.calibrationClicks = [];
+  state.cmPerPixel = cmPerPixel;
+  state.origin = origin;
+  state.yUp = true;
+  state.sourceOffset = { x: 0, y: 0 };
+  state.sourceScale = 1;
+  state.sketchStrokes = [];
+  state.sketchCircles = [];
+  state.fitViewBefore = null;
+  state.lastPointClick = null;
+  state.imageOpacity = 0;
+  opacityInput.value = "0";
+  setShapeOpacity(DEFAULT_SHAPE_OPACITY);
+  els.unit.value = "mm";
+  els.knownLengthUnit.textContent = "mm";
+  arrowMoveUnit.textContent = "mm";
+  els.knownLength.value = "100";
+  els.pointName.value = nextImportedPointName(importedPoints);
+  clearUndoHistory();
+  updateAll();
+  fitImage();
+  setStatus(state.language === "en"
+    ? `Imported DXF as millimeters. ${importedPoints.length} points / ${importedEdges.length} lines / ${importedFaces.length} faces.`
+    : `DXFをmmとして読み込みました。${importedPoints.length}点 / ${importedEdges.length}線 / ${importedFaces.length}面です。`);
 }
 
 function svgText() {
@@ -4819,6 +6121,127 @@ function download(filename, content, type) {
   URL.revokeObjectURL(url);
 }
 
+function printableLineSvgText() {
+  const unit = els.unit.value;
+  const fromMm = (mm) => unit === "cm" ? mm / 10 : mm;
+  const margin = fromMm(10);
+  const scaleGap = fromMm(10);
+  const scaleSize = fromMm(100);
+  const scaleLabelGap = fromMm(2);
+  const scaleLabelSize = fromMm(3.6);
+  const strokeWidth = fromMm(0.35);
+  const pointMap = new Map(state.points.map((point) => [point.id, { ...point, coords: pointToPattern(point) }]));
+  const usedPoints = [];
+
+  state.edges.forEach((edge) => {
+    const from = pointMap.get(edge[0]);
+    const to = pointMap.get(edge[1]);
+    if (!from || !to) return;
+    usedPoints.push(from.coords, to.coords);
+    const controls = edgeCubicControls(edge);
+    if (controls) {
+      usedPoints.push(imagePointToPatternCoords(controls.c1), imagePointToPatternCoords(controls.c2));
+    }
+  });
+
+  if (usedPoints.length === 0) return "";
+
+  const drawingXs = usedPoints.map((point) => point.x);
+  const drawingYs = usedPoints.map((point) => point.y);
+  const drawingMinX = Math.min(...drawingXs);
+  const drawingMinY = Math.min(...drawingYs);
+  const drawingMaxX = Math.max(...drawingXs);
+  const drawingMaxY = Math.max(...drawingYs);
+  const scaleX = drawingMinX;
+  const scaleY = drawingMaxY + scaleGap;
+  const scaleLabel = unit === "cm" ? "10 cm" : "100 mm";
+  const xs = [...drawingXs, scaleX, scaleX + scaleSize];
+  const ys = [...drawingYs, scaleY - scaleLabelGap - scaleLabelSize, scaleY + scaleSize];
+  const minX = Math.min(...xs) - margin;
+  const minY = Math.min(...ys) - margin;
+  const maxX = Math.max(...xs) + margin;
+  const maxY = Math.max(...ys) + margin;
+  const width = Math.max(fromMm(10), maxX - minX);
+  const height = Math.max(fromMm(10), maxY - minY);
+  const lines = state.edges.map((edge) => {
+    const from = pointMap.get(edge[0]);
+    const to = pointMap.get(edge[1]);
+    if (!from || !to) return "";
+    const controls = edgeCubicControls(edge);
+    if (controls) {
+      const c1 = imagePointToPatternCoords(controls.c1);
+      const c2 = imagePointToPatternCoords(controls.c2);
+      return `<path d="M ${from.coords.x} ${from.coords.y} C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${to.coords.x} ${to.coords.y}" />`;
+    }
+    return `<line x1="${from.coords.x}" y1="${from.coords.y}" x2="${to.coords.x}" y2="${to.coords.y}" />`;
+  }).join("\n  ");
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}${unit}" height="${height}${unit}" viewBox="${minX} ${minY} ${width} ${height}">
+  <rect x="${minX}" y="${minY}" width="${width}" height="${height}" fill="#ffffff" />
+  <g fill="none" stroke="#000000" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round">
+  ${lines}
+    <rect x="${scaleX}" y="${scaleY}" width="${scaleSize}" height="${scaleSize}" />
+  </g>
+  <text x="${scaleX}" y="${scaleY - scaleLabelGap}" fill="#000000" font-family="Arial, sans-serif" font-size="${scaleLabelSize}">${scaleLabel}</text>
+</svg>`;
+}
+
+function printDrawing() {
+  const reason = printBlockReason();
+  if (reason) {
+    setStatus(reason);
+    return;
+  }
+
+  const printWindow = window.open("", "_blank");
+  if (!printWindow) {
+    setStatus(t("print.blocked"));
+    return;
+  }
+  printWindow.opener = null;
+
+  const title = escapeHtml(exportFileName(`${state.imageName}-pattern`, ""));
+  const svg = printableLineSvgText();
+  const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${title}</title>
+  <style>
+    @page { margin: 10mm; }
+    html, body { margin: 0; padding: 0; background: #ffffff; color: #000000; }
+    body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    svg { display: block; background: #ffffff; }
+    @media screen {
+      body { padding: 16px; }
+      svg { outline: 1px solid #d0d7de; }
+    }
+  </style>
+</head>
+<body>
+${svg}
+<script>
+  let closeTimer = null;
+  function closePrintWindow() {
+    clearTimeout(closeTimer);
+    closeTimer = setTimeout(() => window.close(), 250);
+  }
+  window.addEventListener("afterprint", closePrintWindow);
+  window.addEventListener("load", () => {
+    window.focus();
+    setTimeout(() => window.print(), 100);
+  });
+</script>
+</body>
+</html>`;
+
+  setStatus(t("print.preparing"));
+  printWindow.document.open();
+  printWindow.document.write(html);
+  printWindow.document.close();
+}
+
 function sanitizedExportBaseName() {
   const raw = fileNameInput.value.trim();
   if (!raw) return "";
@@ -4861,6 +6284,7 @@ function updateAll() {
   updateExportReadiness();
   updateCoach();
   updateUndoButton();
+  updateFaceActionButtons();
   updateSelectedEdgeMeasure();
   opacityValue.textContent = `${Math.round(state.imageOpacity * 100)}%`;
   draw();
@@ -4993,6 +6417,11 @@ function playBrandQuack() {
   });
 }
 
+function resetFromBrandDuck() {
+  playBrandQuack();
+  resetTrace();
+}
+
 function updateCalculatorResult() {
   if (!duckCalculator.input || !duckCalculator.resultValue) return null;
   try {
@@ -5046,11 +6475,17 @@ document.querySelectorAll(".mode-button").forEach((button) => {
   button.addEventListener("click", () => setMode(button.dataset.mode));
 });
 
-els.imageInput.addEventListener("change", (event) => loadImageFile(event.target.files[0]));
-els.brandSound?.addEventListener("click", playBrandQuack);
+els.imageInput.addEventListener("click", () => {
+  els.imageInput.value = "";
+});
+els.imageInput.addEventListener("change", (event) => {
+  const [file] = event.target.files || [];
+  loadImageFile(file);
+  event.target.value = "";
+});
+els.brandSound?.addEventListener("click", resetFromBrandDuck);
 els.language.addEventListener("click", () => {
   state.language = state.language === "ja" ? "en" : "ja";
-  localStorage.setItem("quackTraceLanguage", state.language);
   applyLanguage();
   setStatus(statusForMode(state.mode));
 });
@@ -5072,6 +6507,7 @@ resetButton.addEventListener("click", resetTrace);
 els.connect?.addEventListener("click", connectSelected);
 els.closeShape.addEventListener("click", closeSelectedShape);
 guideToggleButton.addEventListener("click", toggleGuides);
+pointLabelToggleButton.addEventListener("click", togglePointLabels);
 canvasGridToggleButton.addEventListener("click", toggleCanvasGrid);
 gridSnapToggleButton.addEventListener("click", toggleGridSnap);
 scaleReferenceToggleButton.addEventListener("click", toggleScaleReference);
@@ -5079,6 +6515,7 @@ areaLockButton.addEventListener("click", toggleAreaLock);
 straightenButton.addEventListener("click", straightenSelectedEdge);
 horizontalButton.addEventListener("click", () => alignSelectedEdge("horizontal"));
 verticalButton.addEventListener("click", () => alignSelectedEdge("vertical"));
+flipFaceButton.addEventListener("click", flipSelectedFaceHorizontal);
 deleteFaceButton.addEventListener("click", deleteSelectedFace);
 els.yUp.addEventListener("change", () => {
   state.yUp = els.yUp.checked;
@@ -5089,6 +6526,7 @@ els.autoConnect.addEventListener("change", () => {
 });
 els.loupeMinus.addEventListener("click", () => changeLoupeZoom(-1));
 els.loupePlus.addEventListener("click", () => changeLoupeZoom(1));
+clearSketchButton.addEventListener("click", clearSketchGuides);
 els.unit.addEventListener("change", () => {
   els.knownLengthUnit.textContent = els.unit.value;
   arrowMoveUnit.textContent = els.unit.value;
@@ -5118,6 +6556,10 @@ importJsonButton.addEventListener("click", () => {
   importJsonInput.value = "";
   importJsonInput.click();
 });
+importDxfButton.addEventListener("click", () => {
+  importDxfInput.value = "";
+  importDxfInput.click();
+});
 importJsonInput.addEventListener("change", (event) => {
   const file = event.target.files?.[0];
   if (!file) return;
@@ -5130,6 +6572,20 @@ importJsonInput.addEventListener("change", (event) => {
     }
   };
   reader.onerror = () => setStatus("JSONファイルを読み込めませんでした。");
+  reader.readAsText(file);
+});
+importDxfInput.addEventListener("change", (event) => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      importDxfText(String(reader.result), file.name);
+    } catch (error) {
+      setStatus(`DXF読込に失敗しました: ${error.message}`);
+    }
+  };
+  reader.onerror = () => setStatus("DXFファイルを読み込めませんでした。");
   reader.readAsText(file);
 });
 els.downloadJson.addEventListener("click", () => {
@@ -5153,6 +6609,7 @@ downloadDxfButton.addEventListener("click", () => {
   download(exportFileName(`${state.imageName}-pattern.dxf`, ".dxf"), buildDxfText(), "application/dxf");
   setStatus("DXFを保存しました。CLO / Marvelous Designer / CADで読み込みを試せます。");
 });
+printPdfButton.addEventListener("click", printDrawing);
 downloadMdCloPyButton.addEventListener("click", () => {
   if (!state.cmPerPixel) {
     setStatus("MD/CLO用py保存の前に、寸法モードでスケールを設定してください。");
@@ -5185,7 +6642,13 @@ canvas.addEventListener("mousemove", handleCanvasMouseMove);
 canvas.addEventListener("pointerup", handlePointerUp);
 canvas.addEventListener("pointerleave", handlePointerUp);
 canvas.addEventListener("wheel", handleWheel, { passive: false });
+canvas.addEventListener("auxclick", (event) => event.preventDefault());
 window.addEventListener("keydown", handleKeyDown);
+window.addEventListener("keyup", handleKeyUp);
+window.addEventListener("blur", () => {
+  state.spacePanActive = false;
+  canvas.classList.remove("is-view-panning-ready", "is-view-panning");
+});
 window.addEventListener("resize", resizeCanvas);
 window.addEventListener("resize", positionDuckCalculator);
 

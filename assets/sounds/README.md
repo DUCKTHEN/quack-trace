@@ -20,9 +20,3 @@ Pixabay license note:
 - Attribution is not required by Pixabay, but this note is kept for traceability.
 - Do not redistribute or sell the audio as a standalone sound asset.
 - Keep this file bundled only as part of the Quack Trace app experience.
-
-Fallback sound:
-
-- File: `duck-quack.wav`
-- Generated locally by `tools/generate-duck-sound.mjs`
-- No third-party audio content.
