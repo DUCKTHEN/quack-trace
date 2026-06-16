@@ -1,7 +1,8 @@
 ﻿const canvas = document.querySelector("#traceCanvas");
 const ctx = canvas.getContext("2d");
 const canvasPanel = canvas.closest(".canvas-panel");
-const savedGridOpacity = Number(localStorage.getItem("quackTraceGridOpacity"));
+const savedGridOpacityRaw = localStorage.getItem("quackTraceGridOpacity");
+const savedGridOpacity = savedGridOpacityRaw === null ? NaN : Number(savedGridOpacityRaw);
 const savedSnapToGrid = localStorage.getItem("quackTraceSnapToGrid") === "true";
 const savedPointLabels = localStorage.getItem("quackTraceShowPointLabels");
 const DEFAULT_IMAGE_OPACITY = 0.3;
