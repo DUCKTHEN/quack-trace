@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Quack Trace</title>
+    <link rel="icon" type="image/png" href="./assets/quack-trace-icon.png" />
+    <link rel="stylesheet" href="./styles.css?v=20260616-grid-paper-snap" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="toolbar">
+        <div class="brand">
+          <button class="brand-sound-button" id="brandSoundButton" type="button" aria-label="Play duck quack">
+            <img class="brand-mark" src="./assets/quack-trace-icon.png" alt="" aria-hidden="true" />
+          </button>
+          <div>
+            <h1>Quack Trace</h1>
+            <p data-i18n="brand.subtitle">Pattern tracing tool for real-size coordinates</p>
+          </div>
+        </div>
+        <div class="toolbar-actions">
+          <label class="file-button">
+            <input id="imageInput" type="file" accept="image/*" />
+            <span data-i18n="top.image">Image</span>
+          </label>
+          <button id="sampleButton" type="button" data-i18n="top.sample">Sample</button>
+          <button id="fitButton" type="button" title="Fit view">⛶</button>
+          <button id="languageButton" type="button" title="Switch language">English</button>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <aside class="side-panel left-panel">
+          <section class="panel-section">
+            <h2 data-i18n="section.operation">Tools</h2>
+            <div class="mode-grid" role="group" aria-label="Tool mode" data-i18n-aria="section.operationMode">
+              <button class="mode-button active" data-mode="point" type="button">Place point</button>
+              <button class="mode-button" data-mode="calibrate" type="button">Set scale</button>
+              <button class="mode-button" data-mode="origin" type="button">Origin</button>
+              <button class="mode-button" data-mode="pan" type="button">Move</button>
+            </div>
+          </section>
+
+          <section class="panel-section">
+            <h2 data-i18n="section.coordinates">Coordinates</h2>
+            <label>
+              <span data-i18n="label.nextPoint">Next point</span>
+              <input id="pointNameInput" type="text" value="P1" />
+            </label>
+            <label>
+              <span data-i18n="label.unit">Unit</span>
+              <select id="unitSelect">
+                <option value="cm">cm</option>
+                <option value="mm">mm</option>
+              </select>
+            </label>
+            <label class="switch-row">
+              <input id="yUpToggle" type="checkbox" />
+              <span data-i18n="label.yUp">Y axis upward</span>
+            </label>
+          </section>
+
+          <section class="panel-section">
+            <h2 data-i18n="section.scale">Scale</h2>
+            <div class="scale-readout">
+              <span id="scaleStatus" data-i18n="scale.unset">Not set</span>
+              <strong id="scaleValue">--</strong>
+            </div>
+            <label>
+              <span data-i18n="label.knownLength">Known length</span>
+              <div class="inline-input">
+                <input id="knownLengthInput" type="number" min="0.1" step="0.1" value="10" />
+                <span id="knownLengthUnit">cm</span>
+              </div>
+            </label>
+          </section>
+
+          <section class="panel-section">
+            <h2 data-i18n="section.connection">Connect</h2>
+            <div class="connection-actions">
+              <button id="closeShapeButton" type="button">Close</button>
+            </div>
+            <label class="switch-row">
+              <input id="autoConnectToggle" type="checkbox" checked />
+              <span data-i18n="label.autoConnect">Connect lines in click order</span>
+            </label>
+          </section>
+        </aside>
+
+        <section class="canvas-panel">
+          <div class="coach-bubble" id="coachBubble" aria-live="polite">
+            <img src="./assets/quack-trace-icon.png" alt="" aria-hidden="true" />
+            <p id="coachText" data-i18n="coach.start">Load an image, grid paper, or sample shape to begin.</p>
+          </div>
+          <canvas id="traceCanvas" width="1200" height="800"></canvas>
+          <div class="loupe-panel" id="loupePanel" aria-label="loupe">
+            <div class="loupe-header">
+              <span>Loupe</span>
+              <div class="loupe-controls">
+                <button id="loupeMinusButton" type="button" aria-label="loupe zoom out">−</button>
+                <strong id="loupeScale">4x</strong>
+                <button id="loupePlusButton" type="button" aria-label="loupe zoom in">＋</button>
+              </div>
+            </div>
+            <canvas id="loupeCanvas" width="180" height="180"></canvas>
+            <div class="loupe-footer" id="loupeCoords">x -- / y --</div>
+          </div>
+          <div class="canvas-status" id="canvasStatus" data-i18n="status.loadImage">Load an image or show a sample shape.</div>
+        </section>
+
+        <aside class="side-panel right-panel">
+          <section class="panel-section point-list-section">
+            <div class="section-header">
+              <h2 data-i18n="section.pointList">Points</h2>
+              <button id="undoButton" type="button" title="Undo">↶</button>
+            </div>
+            <ol id="pointList" class="point-list"></ol>
+          </section>
+
+          <section class="panel-section">
+            <h2 data-i18n="section.output">Export</h2>
+            <div class="export-grid">
+              <button id="copyJsonButton" type="button">Copy JSON</button>
+              <button id="downloadJsonButton" type="button">Save JSON</button>
+              <button id="downloadSvgButton" type="button">Save SVG</button>
+              <button id="downloadCsvButton" type="button">Save CSV</button>
+            </div>
+            <textarea id="exportText" spellcheck="false"></textarea>
+          </section>
+        </aside>
+      </section>
+    </main>
+
+    <script src="./app.js?v=20260616-grid-paper-snap"></script>
+  </body>
+</html>
