@@ -3,11 +3,14 @@ const ctx = canvas.getContext("2d");
 const canvasPanel = canvas.closest(".canvas-panel");
 const savedGridOpacityRaw = localStorage.getItem("quackTraceGridOpacity");
 const savedGridOpacity = savedGridOpacityRaw === null ? NaN : Number(savedGridOpacityRaw);
+const savedPointSizeRaw = localStorage.getItem("quackTracePointSize");
+const savedPointSize = savedPointSizeRaw === null ? NaN : Number(savedPointSizeRaw);
 const savedSnapToGrid = localStorage.getItem("quackTraceSnapToGrid") === "true";
 const savedPointLabels = localStorage.getItem("quackTraceShowPointLabels");
 const DEFAULT_IMAGE_OPACITY = 0.3;
 const DEFAULT_SHAPE_OPACITY = 0.7;
 const DEFAULT_GRID_OPACITY = 0.5;
+const DEFAULT_POINT_SIZE = 0.8;
 
 const state = {
   image: null,
@@ -18,6 +21,7 @@ const state = {
   imageOpacity: DEFAULT_IMAGE_OPACITY,
   shapeOpacity: DEFAULT_SHAPE_OPACITY,
   gridOpacity: Number.isFinite(savedGridOpacity) ? Math.min(1, Math.max(0, savedGridOpacity)) : DEFAULT_GRID_OPACITY,
+  pointSize: Number.isFinite(savedPointSize) ? Math.min(1, Math.max(0, savedPointSize)) : DEFAULT_POINT_SIZE,
   cursorImagePoint: null,
   loupeZoom: 4,
   mode: "point",
@@ -53,6 +57,7 @@ const state = {
   shapeClipboard: null,
   sketchStrokes: [],
   sketchCircles: [],
+  dxfGuidePaths: [],
 };
 
 const els = {
@@ -160,7 +165,14 @@ const I18N = {
     "label.imageOpacity": "画像の濃さ",
     "label.shapeOpacity": "図の濃さ",
     "label.gridOpacity": "方眼の濃さ",
+    "label.pointSize": "点サイズ",
     "label.svgNames": "SVGに点名を入れる",
+    "label.importOptions": "インポートオプション",
+    "label.dxfInternalLines": "DXF内部線も読む",
+    "label.dxfCurveFit": "DXFをカーブ化",
+    "label.dxfStraightenCurves": "DXFカーブを直線化",
+    "label.dxfKeepMarkers": "DXFポイントを保持",
+    "label.dxfOriginalGuide": "元DXF線を表示",
     "mode.select": "選択・移動",
     "mode.point": "点を置く",
     "mode.curve": "曲げる",
@@ -204,6 +216,8 @@ const I18N = {
     "action.details": "こまかい調整",
     "export.importJson": "JSON読込",
     "export.importJsonTitle": "Quack TraceのJSON保存から作業状態を読み込みます",
+    "export.importDxf": "DXF読込(実験)",
+    "export.importDxfTitle": "実験機能です。CAD由来DXFの閉じた外形を読み込み、カーブは直線化して元DXF線をガイド表示します。",
     "export.copyJson": "JSONコピー",
     "export.saveJson": "JSON保存",
     "export.saveCsv": "CSV保存",
@@ -299,7 +313,14 @@ const I18N = {
     "label.imageOpacity": "Image opacity",
     "label.shapeOpacity": "Shape opacity",
     "label.gridOpacity": "Grid opacity",
+    "label.pointSize": "Point size",
     "label.svgNames": "Include point names in SVG",
+    "label.importOptions": "Import options",
+    "label.dxfInternalLines": "Import DXF internal lines",
+    "label.dxfCurveFit": "Fit DXF curves",
+    "label.dxfStraightenCurves": "Simplify DXF curves as lines",
+    "label.dxfKeepMarkers": "Keep DXF point markers",
+    "label.dxfOriginalGuide": "Show original DXF guide",
     "mode.select": "Select / Move",
     "mode.point": "Place point",
     "mode.curve": "Curve",
@@ -343,6 +364,8 @@ const I18N = {
     "action.details": "Fine controls",
     "export.importJson": "Import JSON",
     "export.importJsonTitle": "Import a saved Quack Trace JSON work state",
+    "export.importDxf": "Import DXF beta",
+    "export.importDxfTitle": "Experimental. Import closed outlines from CAD DXF files, simplify curves as editable lines, and show the original DXF as a guide.",
     "export.copyJson": "Copy JSON",
     "export.saveJson": "Save JSON",
     "export.saveCsv": "Save CSV",
@@ -791,11 +814,24 @@ importJsonInput.accept = ".json,application/json";
 importJsonInput.hidden = true;
 document.body.appendChild(importJsonInput);
 
+const importDxfInput = document.createElement("input");
+importDxfInput.id = "importDxfInput";
+importDxfInput.type = "file";
+importDxfInput.accept = ".dxf,application/dxf,text/plain";
+importDxfInput.hidden = true;
+document.body.appendChild(importDxfInput);
+
 const importJsonButton = document.createElement("button");
 importJsonButton.id = "importJsonButton";
 importJsonButton.type = "button";
 importJsonButton.textContent = "JSON読込";
 importJsonButton.title = "Quack TraceのJSON保存から作業状態を読み込みます";
+
+const importDxfButton = document.createElement("button");
+importDxfButton.id = "importDxfButton";
+importDxfButton.type = "button";
+importDxfButton.textContent = "DXF読込(実験)";
+importDxfButton.title = "実験機能です。CAD由来DXFを直線化し、元DXF線をガイド表示します。";
 
 const svgLabelsLabel = document.createElement("label");
 svgLabelsLabel.className = "switch-row export-option-row";
@@ -805,6 +841,60 @@ svgLabelsToggle.type = "checkbox";
 svgLabelsToggle.checked = true;
 svgLabelsLabel.appendChild(svgLabelsToggle);
 svgLabelsLabel.appendChild(document.createTextNode("SVGに点名を入れる"));
+
+const dxfInternalLinesLabel = document.createElement("label");
+dxfInternalLinesLabel.className = "switch-row export-option-row";
+const dxfInternalLinesToggle = document.createElement("input");
+dxfInternalLinesToggle.id = "dxfInternalLinesToggle";
+dxfInternalLinesToggle.type = "checkbox";
+dxfInternalLinesToggle.checked = false;
+dxfInternalLinesLabel.appendChild(dxfInternalLinesToggle);
+dxfInternalLinesLabel.appendChild(document.createTextNode("DXF内部線も読む"));
+
+const dxfCurveFitLabel = document.createElement("label");
+dxfCurveFitLabel.className = "switch-row export-option-row";
+const dxfCurveFitToggle = document.createElement("input");
+dxfCurveFitToggle.id = "dxfCurveFitToggle";
+dxfCurveFitToggle.type = "checkbox";
+dxfCurveFitToggle.checked = false;
+dxfCurveFitLabel.appendChild(dxfCurveFitToggle);
+dxfCurveFitLabel.appendChild(document.createTextNode("DXFをカーブ化"));
+
+const dxfStraightenCurvesLabel = document.createElement("label");
+dxfStraightenCurvesLabel.className = "switch-row export-option-row";
+const dxfStraightenCurvesToggle = document.createElement("input");
+dxfStraightenCurvesToggle.id = "dxfStraightenCurvesToggle";
+dxfStraightenCurvesToggle.type = "checkbox";
+dxfStraightenCurvesToggle.checked = true;
+dxfStraightenCurvesLabel.appendChild(dxfStraightenCurvesToggle);
+dxfStraightenCurvesLabel.appendChild(document.createTextNode("DXFカーブを直線化"));
+
+const dxfKeepMarkersLabel = document.createElement("label");
+dxfKeepMarkersLabel.className = "switch-row export-option-row";
+const dxfKeepMarkersToggle = document.createElement("input");
+dxfKeepMarkersToggle.id = "dxfKeepMarkersToggle";
+dxfKeepMarkersToggle.type = "checkbox";
+dxfKeepMarkersToggle.checked = true;
+dxfKeepMarkersLabel.appendChild(dxfKeepMarkersToggle);
+dxfKeepMarkersLabel.appendChild(document.createTextNode("DXFポイントを保持"));
+
+const dxfOriginalGuideLabel = document.createElement("label");
+dxfOriginalGuideLabel.className = "switch-row export-option-row";
+const dxfOriginalGuideToggle = document.createElement("input");
+dxfOriginalGuideToggle.id = "dxfOriginalGuideToggle";
+dxfOriginalGuideToggle.type = "checkbox";
+dxfOriginalGuideToggle.checked = true;
+dxfOriginalGuideLabel.appendChild(dxfOriginalGuideToggle);
+dxfOriginalGuideLabel.appendChild(document.createTextNode("元DXF線を表示"));
+
+const importOptionsDetails = document.createElement("details");
+importOptionsDetails.className = "import-options-details";
+const importOptionsSummary = document.createElement("summary");
+importOptionsSummary.textContent = "インポートオプション";
+const importOptionsBody = document.createElement("div");
+importOptionsBody.className = "import-options-body";
+importOptionsBody.append(dxfInternalLinesLabel, dxfCurveFitLabel, dxfStraightenCurvesLabel, dxfKeepMarkersLabel, dxfOriginalGuideLabel);
+importOptionsDetails.append(importOptionsSummary, importOptionsBody);
 
 const exportGrid = document.querySelector(".export-grid");
 const exportStatus = document.createElement("div");
@@ -847,10 +937,11 @@ appendExportCard("記録", [
   els.downloadCsv,
 ]);
 appendExportCard("図面", [
+  importDxfButton,
   els.downloadSvg,
   downloadDxfButton,
   printPdfButton,
-], [svgLabelsLabel]);
+], [svgLabelsLabel, importOptionsDetails]);
 appendExportCard("Python", [
   downloadMdCloPyButton,
   downloadBlenderPyButton,
@@ -907,9 +998,25 @@ gridOpacityValue.className = "range-readout";
 gridOpacityValue.textContent = `${Math.round(state.gridOpacity * 100)}%`;
 gridOpacityLabel.appendChild(gridOpacityValue);
 
+const pointSizeLabel = document.createElement("label");
+pointSizeLabel.className = "compact-range-label";
+pointSizeLabel.textContent = "点サイズ";
+const pointSizeInput = document.createElement("input");
+pointSizeInput.id = "pointSizeInput";
+pointSizeInput.type = "range";
+pointSizeInput.min = "0";
+pointSizeInput.max = "1";
+pointSizeInput.step = "0.05";
+pointSizeInput.value = String(state.pointSize);
+pointSizeLabel.appendChild(pointSizeInput);
+const pointSizeValue = document.createElement("span");
+pointSizeValue.className = "range-readout";
+pointSizeValue.textContent = `${Math.round(state.pointSize * 100)}%`;
+pointSizeLabel.appendChild(pointSizeValue);
+
 const opacityControls = document.createElement("div");
 opacityControls.className = "opacity-controls-row";
-opacityControls.append(opacityLabel, shapeOpacityLabel, gridOpacityLabel);
+opacityControls.append(opacityLabel, shapeOpacityLabel, gridOpacityLabel, pointSizeLabel);
 viewSection.appendChild(opacityControls);
 
 function applyLanguage() {
@@ -978,6 +1085,7 @@ function applyLanguage() {
   }
 
   setButton(importJsonButton, "export.importJson", "export.importJsonTitle");
+  setButton(importDxfButton, "export.importDxf", "export.importDxfTitle");
   setButton(els.copyJson, "export.copyJson");
   setButton(els.downloadJson, "export.saveJson");
   setButton(els.downloadCsv, "export.saveCsv");
@@ -987,11 +1095,18 @@ function applyLanguage() {
   setButton(downloadMdCloPyButton, "export.saveMdClo");
   setButton(downloadBlenderPyButton, "export.saveBlender");
   svgLabelsLabel.lastChild.textContent = t("label.svgNames");
+  importOptionsSummary.textContent = t("label.importOptions");
+  dxfInternalLinesLabel.lastChild.textContent = t("label.dxfInternalLines");
+  dxfCurveFitLabel.lastChild.textContent = t("label.dxfCurveFit");
+  dxfStraightenCurvesLabel.lastChild.textContent = t("label.dxfStraightenCurves");
+  dxfKeepMarkersLabel.lastChild.textContent = t("label.dxfKeepMarkers");
+  dxfOriginalGuideLabel.lastChild.textContent = t("label.dxfOriginalGuide");
   fileNameLabel.firstChild.textContent = t("label.fileName");
   fileNameInput.placeholder = t("label.fileNamePlaceholder");
   opacityLabel.firstChild.textContent = t("label.imageOpacity");
   shapeOpacityLabel.firstChild.textContent = t("label.shapeOpacity");
   gridOpacityLabel.firstChild.textContent = t("label.gridOpacity");
+  pointSizeLabel.firstChild.textContent = t("label.pointSize");
   if (knownLengthLabel) knownLengthLabel.textContent = t("label.knownLength");
   els.knownLength.placeholder = state.language === "en" ? "e.g. 38" : "例: 38";
   arrowMoveInput.placeholder = state.language === "en" ? "e.g. 1" : "例: 1";
@@ -2506,6 +2621,7 @@ function createSampleImage() {
     state.sourceScale = 1;
     state.sketchStrokes = [];
     state.sketchCircles = [];
+    state.dxfGuidePaths = [];
     state.fitViewBefore = null;
     state.imageOpacity = DEFAULT_IMAGE_OPACITY;
     opacityInput.value = String(DEFAULT_IMAGE_OPACITY);
@@ -2553,6 +2669,7 @@ function createBlankGrid() {
     state.sourceScale = 1;
     state.sketchStrokes = [];
     state.sketchCircles = [];
+    state.dxfGuidePaths = [];
     state.fitViewBefore = null;
     state.imageOpacity = 0;
     opacityInput.value = "0";
@@ -2609,6 +2726,7 @@ function loadImageFile(file) {
       state.sourceScale = 1;
       state.sketchStrokes = [];
       state.sketchCircles = [];
+      state.dxfGuidePaths = [];
       state.fitViewBefore = null;
       state.imageOpacity = DEFAULT_IMAGE_OPACITY;
       opacityInput.value = String(DEFAULT_IMAGE_OPACITY);
@@ -3504,6 +3622,7 @@ function draw() {
   drawSketchGuides();
   drawPatternCirclePreview();
   drawFaces();
+  drawDxfOriginalGuides();
   if (state.showGuides) {
     drawOrigin();
     drawAreaLockGuides();
@@ -3520,6 +3639,27 @@ function draw() {
   }
   drawSelectionBox();
   drawLoupe();
+}
+
+function drawDxfOriginalGuides() {
+  if (!dxfOriginalGuideToggle?.checked || state.dxfGuidePaths.length === 0) return;
+  ctx.save();
+  ctx.setLineDash([5, 5]);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = "rgba(88, 214, 255, 0.72)";
+  ctx.lineWidth = 1.4;
+  state.dxfGuidePaths.forEach((path) => {
+    if (!Array.isArray(path) || path.length < 2) return;
+    ctx.beginPath();
+    path.forEach((point, index) => {
+      const screen = imageToScreen(point.x, point.y);
+      if (index === 0) ctx.moveTo(screen.x, screen.y);
+      else ctx.lineTo(screen.x, screen.y);
+    });
+    ctx.stroke();
+  });
+  ctx.restore();
 }
 
 function drawSketchGuides() {
@@ -3754,7 +3894,7 @@ function drawHandleNode(screen, color, active = false) {
 }
 
 function drawAreaLabels() {
-  if (!state.areaLock || state.faces.length === 0) return;
+  if (state.faces.length === 0) return;
   const scale = state.cmPerPixel || 1;
   const factor = unitFactor();
   const areaFactor = scale * scale * factor * factor;
@@ -4408,6 +4548,14 @@ function setGridOpacity(value) {
   updateCanvasGridBackground();
 }
 
+function setPointSize(value) {
+  state.pointSize = Math.min(1, Math.max(0, Number(value)));
+  pointSizeInput.value = String(state.pointSize);
+  pointSizeValue.textContent = `${Math.round(state.pointSize * 100)}%`;
+  localStorage.setItem("quackTracePointSize", String(state.pointSize));
+  draw();
+}
+
 function faceFillStyle() {
   const [r, g, b] = DRAW_COLORS.faceFill;
   return `rgba(${r}, ${g}, ${b}, ${state.shapeOpacity})`;
@@ -4792,20 +4940,22 @@ function drawPoints() {
   state.points.forEach((point, index) => {
     const screen = imageToScreen(point.x, point.y);
     const isSelected = state.selected.has(point.id);
+    const pointRadius = (isSelected ? 7 : 6) * state.pointSize;
     ctx.fillStyle = isSelected ? DRAW_COLORS.selected : "#f8f8f6";
     ctx.strokeStyle = DRAW_COLORS.pointStroke;
-    ctx.lineWidth = 2.2;
+    ctx.lineWidth = Math.max(1.2, 2.2 * state.pointSize);
     ctx.beginPath();
-    ctx.arc(screen.x, screen.y, isSelected ? 7 : 6, 0, Math.PI * 2);
+    ctx.arc(screen.x, screen.y, pointRadius, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
     if (!state.showPointLabels) return;
     const label = `${index + 1}:${point.name}`;
+    const labelX = screen.x + Math.max(7, pointRadius + 4);
     ctx.lineWidth = 4;
     ctx.strokeStyle = DRAW_COLORS.labelUnderlay;
-    ctx.strokeText(label, screen.x + 10, screen.y);
+    ctx.strokeText(label, labelX, screen.y);
     ctx.fillStyle = DRAW_COLORS.label;
-    ctx.fillText(label, screen.x + 10, screen.y);
+    ctx.fillText(label, labelX, screen.y);
   });
   ctx.restore();
 }
@@ -4868,6 +5018,7 @@ function resetTrace() {
   if (hasTraceContent()) pushHistory();
   state.sketchStrokes = [];
   state.sketchCircles = [];
+  state.dxfGuidePaths = [];
   state.points = [];
   state.edges = [];
   state.faces = [];
@@ -5288,6 +5439,7 @@ function importQuackTraceJson(data) {
   state.sourceScale = underlayScale;
   state.sketchStrokes = [];
   state.sketchCircles = [];
+  state.dxfGuidePaths = [];
   state.fitViewBefore = null;
   state.lastPointClick = null;
   els.unit.value = unit;
@@ -5302,6 +5454,779 @@ function importQuackTraceJson(data) {
   setStatus(state.language === "en"
     ? `Imported JSON. Restored ${importedPoints.length} points / ${importedFaces.length} faces.`
     : `JSONを読み込みました。${importedPoints.length}点 / ${importedFaces.length}面を復元しました。`);
+}
+
+function parseDxfPairs(text) {
+  const lines = String(text).replace(/^\uFEFF/, "").split(/\r?\n/);
+  const pairs = [];
+  for (let index = 0; index < lines.length - 1; index += 2) {
+    const code = Number(String(lines[index]).trim());
+    if (!Number.isFinite(code)) continue;
+    pairs.push({ code, value: String(lines[index + 1]).trim() });
+  }
+  return pairs;
+}
+
+function collectDxfEntityPairs(pairs, startIndex) {
+  const entityPairs = [];
+  let index = startIndex + 1;
+  while (index < pairs.length && pairs[index].code !== 0) {
+    entityPairs.push(pairs[index]);
+    index += 1;
+  }
+  return { pairs: entityPairs, nextIndex: index - 1 };
+}
+
+function parseDxfPolylineEntity(pairs, startIndex) {
+  const header = [];
+  const vertices = [];
+  let currentVertex = null;
+  let index = startIndex + 1;
+
+  for (; index < pairs.length; index += 1) {
+    const pair = pairs[index];
+    if (pair.code === 0) {
+      const marker = pair.value.toUpperCase();
+      if (marker === "VERTEX") {
+        if (currentVertex) vertices.push(currentVertex);
+        currentVertex = [];
+        continue;
+      }
+      if (marker === "SEQEND") {
+        if (currentVertex) vertices.push(currentVertex);
+        break;
+      }
+      if (currentVertex) vertices.push(currentVertex);
+      index -= 1;
+      break;
+    }
+    if (currentVertex) currentVertex.push(pair);
+    else header.push(pair);
+  }
+
+  return { entity: { type: "POLYLINE", pairs: header, vertices }, nextIndex: index };
+}
+
+function parseDxfEntityAt(pairs, startIndex) {
+  const marker = pairs[startIndex]?.value?.toUpperCase();
+  if (marker === "POLYLINE") return parseDxfPolylineEntity(pairs, startIndex);
+  if (["LINE", "LWPOLYLINE", "POLYLINE", "CIRCLE", "ARC", "SPLINE", "POINT", "INSERT"].includes(marker)) {
+    const collected = collectDxfEntityPairs(pairs, startIndex);
+    return { entity: { type: marker, pairs: collected.pairs }, nextIndex: collected.nextIndex };
+  }
+  return null;
+}
+
+function dxfNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function dxfFirstNumber(pairs, code, fallback = null) {
+  const pair = pairs.find((candidate) => candidate.code === code);
+  return pair ? dxfNumber(pair.value) : fallback;
+}
+
+function dxfFirstText(pairs, code, fallback = "") {
+  const pair = pairs.find((candidate) => candidate.code === code);
+  return pair ? String(pair.value) : fallback;
+}
+
+function dxfFlag(pairs, code) {
+  return dxfFirstNumber(pairs, code, 0) || 0;
+}
+
+function parseDxfDocument(text) {
+  const pairs = parseDxfPairs(text);
+  const entities = [];
+  const blocks = new Map();
+  let section = "";
+  let currentBlock = null;
+
+  for (let index = 0; index < pairs.length; index += 1) {
+    const pair = pairs[index];
+    if (pair.code !== 0) continue;
+    const marker = pair.value.toUpperCase();
+
+    if (marker === "SECTION") {
+      section = pairs[index + 1]?.code === 2 ? pairs[index + 1].value.toUpperCase() : "";
+      continue;
+    }
+    if (marker === "ENDSEC") {
+      section = "";
+      currentBlock = null;
+      continue;
+    }
+
+    if (section === "BLOCKS") {
+      if (marker === "BLOCK") {
+        const collected = collectDxfEntityPairs(pairs, index);
+        const blockPairs = collected.pairs;
+        currentBlock = {
+          name: dxfFirstText(blockPairs, 2, ""),
+          base: {
+            x: dxfFirstNumber(blockPairs, 10, 0) || 0,
+            y: dxfFirstNumber(blockPairs, 20, 0) || 0,
+          },
+          entities: [],
+        };
+        index = collected.nextIndex;
+        continue;
+      }
+      if (marker === "ENDBLK") {
+        if (currentBlock?.name) blocks.set(currentBlock.name, currentBlock);
+        currentBlock = null;
+        continue;
+      }
+      if (currentBlock) {
+        const parsed = parseDxfEntityAt(pairs, index);
+        if (parsed) {
+          currentBlock.entities.push(parsed.entity);
+          index = parsed.nextIndex;
+        }
+      }
+      continue;
+    }
+
+    if (section === "ENTITIES") {
+      const parsed = parseDxfEntityAt(pairs, index);
+      if (parsed) {
+        entities.push(parsed.entity);
+        index = parsed.nextIndex;
+      }
+    }
+  }
+
+  return { blocks, entities };
+}
+
+function dxfInsertTransform(insertPairs, blockBase = { x: 0, y: 0 }) {
+  const insertX = dxfFirstNumber(insertPairs, 10, 0) || 0;
+  const insertY = dxfFirstNumber(insertPairs, 20, 0) || 0;
+  const scaleX = dxfFirstNumber(insertPairs, 41, 1) || 1;
+  const scaleY = dxfFirstNumber(insertPairs, 42, scaleX) || scaleX;
+  const rotation = ((dxfFirstNumber(insertPairs, 50, 0) || 0) * Math.PI) / 180;
+  const cos = Math.cos(rotation);
+  const sin = Math.sin(rotation);
+  return { insertX, insertY, scaleX, scaleY, cos, sin, blockBase };
+}
+
+function transformDxfPoint(point, transform) {
+  if (!transform) return point;
+  const x = (point.x - transform.blockBase.x) * transform.scaleX;
+  const y = (point.y - transform.blockBase.y) * transform.scaleY;
+  return {
+    x: transform.insertX + x * transform.cos - y * transform.sin,
+    y: transform.insertY + x * transform.sin + y * transform.cos,
+    bulge: point.bulge || 0,
+    keyPoint: Boolean(point.keyPoint),
+  };
+}
+
+function expandDxfEntities(document) {
+  const expanded = [];
+  document.entities.forEach((entity) => {
+    if (entity.type !== "INSERT") {
+      expanded.push(entity);
+      return;
+    }
+    const blockName = dxfFirstText(entity.pairs || [], 2, "");
+    const block = document.blocks.get(blockName);
+    if (!block) return;
+    const transform = dxfInsertTransform(entity.pairs || [], block.base);
+    block.entities.forEach((blockEntity) => {
+      expanded.push({ ...blockEntity, transform, blockName });
+    });
+  });
+
+  if (expanded.length > 0) return expanded;
+  document.blocks.forEach((block) => {
+    block.entities.forEach((entity) => expanded.push({ ...entity, blockName: block.name }));
+  });
+  return expanded;
+}
+
+function dxfPointSequence(pairs, xCode = 10, yCode = 20) {
+  const points = [];
+  let current = null;
+  pairs.forEach((pair) => {
+    if (pair.code === xCode) {
+      if (current && Number.isFinite(current.x) && Number.isFinite(current.y)) points.push(current);
+      current = { x: dxfNumber(pair.value), y: null, bulge: 0 };
+    } else if (pair.code === yCode && current) {
+      current.y = dxfNumber(pair.value);
+    } else if (pair.code === 42 && current) {
+      current.bulge = dxfNumber(pair.value) || 0;
+    }
+  });
+  if (current && Number.isFinite(current.x) && Number.isFinite(current.y)) points.push(current);
+  return points;
+}
+
+function sameDxfPoint(a, b, tolerance = 0.0001) {
+  return Boolean(a && b && Math.hypot(a.x - b.x, a.y - b.y) <= tolerance);
+}
+
+function sampleDxfBulgeSegment(from, to, bulge) {
+  if (!Number.isFinite(bulge) || Math.abs(bulge) < 0.000001) return [to];
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const chord = Math.hypot(dx, dy);
+  if (chord === 0) return [];
+
+  const theta = 4 * Math.atan(bulge);
+  const radius = chord / (2 * Math.sin(Math.abs(theta) / 2));
+  const ux = dx / chord;
+  const uy = dy / chord;
+  const normal = { x: -uy, y: ux };
+  const midpoint = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
+  const centerDistance = radius * Math.cos(theta / 2) * Math.sign(bulge);
+  const center = {
+    x: midpoint.x + normal.x * centerDistance,
+    y: midpoint.y + normal.y * centerDistance,
+  };
+  const startAngle = Math.atan2(from.y - center.y, from.x - center.x);
+  let endAngle = Math.atan2(to.y - center.y, to.x - center.x);
+  let delta = endAngle - startAngle;
+  if (bulge > 0 && delta <= 0) delta += Math.PI * 2;
+  if (bulge < 0 && delta >= 0) delta -= Math.PI * 2;
+  endAngle = startAngle + delta;
+
+  const steps = Math.max(4, Math.ceil(Math.abs(delta) / (Math.PI / 18)));
+  const samples = [];
+  for (let step = 1; step <= steps; step += 1) {
+    const angle = startAngle + (endAngle - startAngle) * (step / steps);
+    samples.push({
+      x: center.x + Math.cos(angle) * Math.abs(radius),
+      y: center.y + Math.sin(angle) * Math.abs(radius),
+    });
+  }
+  return samples;
+}
+
+function dxfPolylinePath(vertices, closed) {
+  if (vertices.length < 2) return [];
+  const points = [{ x: vertices[0].x, y: vertices[0].y }];
+  const segmentCount = closed ? vertices.length : vertices.length - 1;
+  for (let index = 0; index < segmentCount; index += 1) {
+    const from = vertices[index];
+    const to = vertices[(index + 1) % vertices.length];
+    const samples = sampleDxfBulgeSegment(from, to, from.bulge || 0);
+    points.push(...samples);
+  }
+  if (closed && sameDxfPoint(points[0], points[points.length - 1])) points.pop();
+  return points;
+}
+
+function sampleDxfArc(center, radius, startDegrees, endDegrees) {
+  if (!center || !Number.isFinite(radius) || radius <= 0) return [];
+  let start = (startDegrees * Math.PI) / 180;
+  let end = (endDegrees * Math.PI) / 180;
+  while (end < start) end += Math.PI * 2;
+  const steps = Math.max(4, Math.ceil((end - start) / (Math.PI / 18)));
+  const points = [];
+  for (let step = 0; step <= steps; step += 1) {
+    const angle = start + (end - start) * (step / steps);
+    points.push({
+      x: center.x + Math.cos(angle) * radius,
+      y: center.y + Math.sin(angle) * radius,
+      keyPoint: step === 0 || step === steps,
+    });
+  }
+  return points;
+}
+
+function dxfEntityToPath(entity) {
+  const pairs = entity.pairs || [];
+  const transformPath = (path) => ({
+    ...path,
+    points: path.points.map((point) => transformDxfPoint(point, entity.transform)),
+  });
+
+  if (entity.type === "LINE") {
+    const x1 = dxfFirstNumber(pairs, 10);
+    const y1 = dxfFirstNumber(pairs, 20);
+    const x2 = dxfFirstNumber(pairs, 11);
+    const y2 = dxfFirstNumber(pairs, 21);
+    if ([x1, y1, x2, y2].some((value) => value === null)) return null;
+    return transformPath({ points: [{ x: x1, y: y1 }, { x: x2, y: y2 }], closed: false });
+  }
+
+  if (entity.type === "LWPOLYLINE") {
+    const vertices = dxfPointSequence(pairs);
+    const closed = Boolean(dxfFlag(pairs, 70) & 1) || sameDxfPoint(vertices[0], vertices[vertices.length - 1]);
+    return transformPath({ points: dxfPolylinePath(vertices, closed), closed });
+  }
+
+  if (entity.type === "POLYLINE") {
+    const vertices = (entity.vertices || []).map((vertexPairs) => dxfPointSequence(vertexPairs)[0]).filter(Boolean);
+    const closed = Boolean(dxfFlag(pairs, 70) & 1) || sameDxfPoint(vertices[0], vertices[vertices.length - 1]);
+    return transformPath({ points: dxfPolylinePath(vertices, closed), closed });
+  }
+
+  if (entity.type === "CIRCLE" || entity.type === "ARC") {
+    const center = { x: dxfFirstNumber(pairs, 10), y: dxfFirstNumber(pairs, 20) };
+    const radius = dxfFirstNumber(pairs, 40);
+    if (center.x === null || center.y === null || radius === null) return null;
+    if (entity.type === "CIRCLE") {
+      return transformPath({ points: sampleDxfArc(center, radius, 0, 360).slice(0, -1), closed: true });
+    }
+    const start = dxfFirstNumber(pairs, 50) ?? 0;
+    const end = dxfFirstNumber(pairs, 51) ?? 0;
+    return transformPath({ points: sampleDxfArc(center, radius, start, end), closed: false });
+  }
+
+  if (entity.type === "SPLINE") {
+    const fitPoints = dxfPointSequence(pairs, 11, 21);
+    const controlPoints = dxfPointSequence(pairs, 10, 20);
+    const points = fitPoints.length >= 2 ? fitPoints : controlPoints;
+    return transformPath({ points, closed: Boolean(dxfFlag(pairs, 70) & 1) });
+  }
+
+  return null;
+}
+
+function dxfEntityToMarker(entity) {
+  if (entity.type !== "POINT") return null;
+  const pairs = entity.pairs || [];
+  const x = dxfFirstNumber(pairs, 10);
+  const y = dxfFirstNumber(pairs, 20);
+  if (x === null || y === null) return null;
+  const point = transformDxfPoint({ x, y, keyPoint: true }, entity.transform);
+  return {
+    ...point,
+    layer: dxfFirstText(pairs, 8, ""),
+  };
+}
+
+function dxfDistanceToSegment(point, from, to) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const lengthSq = dx * dx + dy * dy;
+  if (lengthSq === 0) return Math.hypot(point.x - from.x, point.y - from.y);
+  const t = Math.max(0, Math.min(1, ((point.x - from.x) * dx + (point.y - from.y) * dy) / lengthSq));
+  const x = from.x + dx * t;
+  const y = from.y + dy * t;
+  return Math.hypot(point.x - x, point.y - y);
+}
+
+function dxfNearestPathPosition(point, points, closed) {
+  const edgeCount = closed ? points.length : points.length - 1;
+  let best = { distance: Infinity, order: 0 };
+  for (let index = 0; index < edgeCount; index += 1) {
+    const from = points[index];
+    const to = points[(index + 1) % points.length];
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const lengthSq = dx * dx + dy * dy;
+    const t = lengthSq === 0
+      ? 0
+      : Math.max(0, Math.min(1, ((point.x - from.x) * dx + (point.y - from.y) * dy) / lengthSq));
+    const x = from.x + dx * t;
+    const y = from.y + dy * t;
+    const distance = Math.hypot(point.x - x, point.y - y);
+    if (distance < best.distance) best = { distance, order: index + t };
+  }
+  return best;
+}
+
+function mergeDxfKeyPoints(points, keyPoints, sourcePoints, closed) {
+  if (!Array.isArray(keyPoints) || keyPoints.length === 0) return points;
+  const merged = [];
+  const seen = new Set();
+  const addPoint = (point) => {
+    const key = `${point.x.toFixed(3)},${point.y.toFixed(3)}`;
+    if (seen.has(key)) return;
+    const position = dxfNearestPathPosition(point, sourcePoints, closed);
+    seen.add(key);
+    merged.push({ ...point, keyPoint: true, _dxfOrder: position.order });
+  };
+
+  points.forEach(addPoint);
+  keyPoints
+    .filter((point) => dxfNearestPathPosition(point, points, closed).distance > 2.5)
+    .forEach(addPoint);
+  merged.sort((a, b) => a._dxfOrder - b._dxfOrder);
+  return merged.map(({ _dxfOrder, ...point }) => point);
+}
+
+function simplifyDxfOpenPoints(points, tolerance = 2.2) {
+  if (points.length <= 2) return [...points];
+  let maxDistance = -1;
+  let splitIndex = -1;
+  const first = points[0];
+  const last = points[points.length - 1];
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const distance = dxfDistanceToSegment(points[index], first, last);
+    if (distance > maxDistance) {
+      maxDistance = distance;
+      splitIndex = index;
+    }
+  }
+  if (maxDistance <= tolerance || splitIndex === -1) return [first, last];
+  const left = simplifyDxfOpenPoints(points.slice(0, splitIndex + 1), tolerance);
+  const right = simplifyDxfOpenPoints(points.slice(splitIndex), tolerance);
+  return [...left.slice(0, -1), ...right];
+}
+
+function dxfAngleAt(previous, current, next) {
+  const ax = previous.x - current.x;
+  const ay = previous.y - current.y;
+  const bx = next.x - current.x;
+  const by = next.y - current.y;
+  const aLength = Math.hypot(ax, ay);
+  const bLength = Math.hypot(bx, by);
+  if (aLength === 0 || bLength === 0) return Math.PI;
+  const dot = (ax * bx + ay * by) / (aLength * bLength);
+  return Math.acos(Math.max(-1, Math.min(1, dot)));
+}
+
+function dxfClosedCornerIndexes(points) {
+  const corners = [];
+  const cornerAngle = (150 * Math.PI) / 180;
+  for (let index = 0; index < points.length; index += 1) {
+    const previous = points[(index - 1 + points.length) % points.length];
+    const current = points[index];
+    const next = points[(index + 1) % points.length];
+    if (dxfAngleAt(previous, current, next) < cornerAngle) corners.push(index);
+  }
+  return corners;
+}
+
+function dxfClosedSegment(points, startIndex, endIndex) {
+  const segment = [points[startIndex]];
+  let index = startIndex;
+  while (index !== endIndex) {
+    index = (index + 1) % points.length;
+    segment.push(points[index]);
+  }
+  return segment;
+}
+
+function simplifyDxfClosedPoints(points, tolerance = 2.2) {
+  const uniquePoints = sameDxfPoint(points[0], points[points.length - 1]) ? points.slice(0, -1) : [...points];
+  if (uniquePoints.length <= 4) return uniquePoints;
+  const corners = dxfClosedCornerIndexes(uniquePoints);
+
+  if (corners.length >= 2) {
+    const simplified = [];
+    corners.forEach((cornerIndex, index) => {
+      const nextCornerIndex = corners[(index + 1) % corners.length];
+      const segment = dxfClosedSegment(uniquePoints, cornerIndex, nextCornerIndex);
+      const segmentSimplified = simplifyDxfOpenPoints(segment, tolerance);
+      if (index === 0) simplified.push(...segmentSimplified);
+      else simplified.push(...segmentSimplified.slice(1));
+    });
+    if (sameDxfPoint(simplified[0], simplified[simplified.length - 1])) simplified.pop();
+    return simplified.length >= 3 ? simplified : uniquePoints;
+  }
+
+  const halfIndex = Math.floor(uniquePoints.length / 2);
+  const firstHalf = simplifyDxfOpenPoints(uniquePoints.slice(0, halfIndex + 1), tolerance);
+  const secondHalf = simplifyDxfOpenPoints([...uniquePoints.slice(halfIndex), uniquePoints[0]], tolerance);
+  const combined = [...firstHalf, ...secondHalf.slice(1, -1)];
+  return combined.length >= 3 ? combined : uniquePoints;
+}
+
+function simplifyDxfPathPoints(points, closed) {
+  if (closed) return simplifyDxfClosedPoints(points);
+  return simplifyDxfOpenPoints(points);
+}
+
+function simplifyDxfClosedByDiameter(points, tolerance = 36) {
+  const uniquePoints = sameDxfPoint(points[0], points[points.length - 1]) ? points.slice(0, -1) : [...points];
+  if (uniquePoints.length <= 4) return uniquePoints;
+  let firstIndex = 0;
+  let secondIndex = Math.floor(uniquePoints.length / 2);
+  let maxDistance = -1;
+  for (let a = 0; a < uniquePoints.length; a += 1) {
+    for (let b = a + 1; b < uniquePoints.length; b += 1) {
+      const distance = Math.hypot(uniquePoints[a].x - uniquePoints[b].x, uniquePoints[a].y - uniquePoints[b].y);
+      if (distance > maxDistance) {
+        maxDistance = distance;
+        firstIndex = a;
+        secondIndex = b;
+      }
+    }
+  }
+  const firstSegment = dxfClosedSegment(uniquePoints, firstIndex, secondIndex);
+  const secondSegment = dxfClosedSegment(uniquePoints, secondIndex, firstIndex);
+  const simplified = [
+    ...simplifyDxfOpenPoints(firstSegment, tolerance),
+    ...simplifyDxfOpenPoints(secondSegment, tolerance).slice(1, -1),
+  ];
+  return simplified.length >= 3 ? simplified : uniquePoints;
+}
+
+function dxfNearestUniquePoint(target, points, used) {
+  let best = null;
+  let bestDistance = Infinity;
+  points.forEach((point) => {
+    const key = `${point.x.toFixed(3)},${point.y.toFixed(3)}`;
+    if (used.has(key)) return;
+    const distance = Math.hypot(point.x - target.x, point.y - target.y);
+    if (distance < bestDistance) {
+      best = point;
+      bestDistance = distance;
+    }
+  });
+  if (!best) return null;
+  used.add(`${best.x.toFixed(3)},${best.y.toFixed(3)}`);
+  return best;
+}
+
+function simplifyDxfThinClosedPoints(points) {
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const width = maxX - minX;
+  const height = maxY - minY;
+  const thin = Math.min(width, height);
+  const long = Math.max(width, height);
+  if (thin > 45 || long / Math.max(1, thin) < 3) return null;
+
+  const used = new Set();
+  const corners = [
+    { x: minX, y: minY },
+    { x: maxX, y: minY },
+    { x: maxX, y: maxY },
+    { x: minX, y: maxY },
+  ]
+    .map((corner) => dxfNearestUniquePoint(corner, points, used))
+    .filter(Boolean);
+  return corners.length >= 3 ? corners : null;
+}
+
+function simplifyDxfStraightenedPoints(points, closed) {
+  const uniquePoints = closed && sameDxfPoint(points[0], points[points.length - 1]) ? points.slice(0, -1) : [...points];
+  if (uniquePoints.length <= 4) return uniquePoints;
+  const keyPoints = uniquePoints.filter((point) => point.keyPoint);
+  const sharpCornerAngle = (115 * Math.PI) / 180;
+
+  if (closed && keyPoints.length >= 3 && keyPoints.length < uniquePoints.length * 0.6) return keyPoints;
+  if (!closed && keyPoints.length >= 2 && keyPoints.length < uniquePoints.length * 0.6) return keyPoints;
+
+  if (closed) {
+    const thinShape = simplifyDxfThinClosedPoints(uniquePoints);
+    if (thinShape) return thinShape;
+    const corners = [];
+    for (let index = 0; index < uniquePoints.length; index += 1) {
+      const previous = uniquePoints[(index - 1 + uniquePoints.length) % uniquePoints.length];
+      const current = uniquePoints[index];
+      const next = uniquePoints[(index + 1) % uniquePoints.length];
+      if (dxfAngleAt(previous, current, next) < sharpCornerAngle) corners.push(index);
+    }
+    if (corners.length >= 3 && corners.length < uniquePoints.length * 0.25) return corners.map((index) => uniquePoints[index]);
+    return simplifyDxfClosedByDiameter(uniquePoints, 36);
+  }
+
+  const keep = [uniquePoints[0]];
+  for (let index = 1; index < uniquePoints.length - 1; index += 1) {
+    if (dxfAngleAt(uniquePoints[index - 1], uniquePoints[index], uniquePoints[index + 1]) < sharpCornerAngle) {
+      keep.push(uniquePoints[index]);
+    }
+  }
+  keep.push(uniquePoints[uniquePoints.length - 1]);
+  if (keep.length > 2 && keep.length < uniquePoints.length * 0.25) return keep;
+  return simplifyDxfOpenPoints(uniquePoints, 36);
+}
+
+function dxfCurveControlsForPoints(points, closed) {
+  const edgeCount = closed ? points.length : points.length - 1;
+  if (edgeCount <= 0) return [];
+  const cornerAngle = (150 * Math.PI) / 180;
+  const tangents = points.map((point, index) => {
+    if (!closed && (index === 0 || index === points.length - 1)) return { x: 0, y: 0 };
+    const previous = points[(index - 1 + points.length) % points.length];
+    const next = points[(index + 1) % points.length];
+    if (dxfAngleAt(previous, point, next) < cornerAngle) return { x: 0, y: 0 };
+    return {
+      x: (next.x - previous.x) / 6,
+      y: (next.y - previous.y) / 6,
+    };
+  });
+  const controls = [];
+  for (let index = 0; index < edgeCount; index += 1) {
+    const p1 = points[index];
+    const p2 = points[(index + 1) % points.length];
+    const t1 = tangents[index];
+    const t2 = tangents[(index + 1) % points.length];
+    controls.push({
+      c1: {
+        x: p1.x + t1.x,
+        y: p1.y + t1.y,
+      },
+      c2: {
+        x: p2.x - t2.x,
+        y: p2.y - t2.y,
+      },
+    });
+  }
+  return controls;
+}
+
+function buildDxfImportPath(path, curveFit, straightenCurves = false) {
+  let pathPoints = [...path.points];
+  if (path.closed && sameDxfPoint(pathPoints[0], pathPoints[pathPoints.length - 1])) pathPoints = pathPoints.slice(0, -1);
+  if ((!curveFit && !straightenCurves) || pathPoints.length <= 4) return { points: pathPoints, controls: [], closed: path.closed };
+  let simplifiedPoints = straightenCurves
+    ? simplifyDxfStraightenedPoints(pathPoints, path.closed)
+    : simplifyDxfPathPoints(pathPoints, path.closed);
+  simplifiedPoints = mergeDxfKeyPoints(simplifiedPoints, path.keyPoints || [], pathPoints, path.closed);
+  if (straightenCurves) return { points: simplifiedPoints, controls: [], closed: path.closed };
+  const controls = dxfCurveControlsForPoints(simplifiedPoints, path.closed);
+  return { points: simplifiedPoints, controls, closed: path.closed };
+}
+
+function createTransparentWorkspace(width, height) {
+  const grid = document.createElement("canvas");
+  grid.width = Math.max(320, Math.ceil(width));
+  grid.height = Math.max(240, Math.ceil(height));
+  return grid;
+}
+
+function importDxfText(text, fileName = "imported-dxf") {
+  const document = parseDxfDocument(text);
+  const expandedEntities = expandDxfEntities(document);
+  const keepDxfMarkers = Boolean(dxfKeepMarkersToggle?.checked);
+  const allPaths = expandedEntities
+    .map(dxfEntityToPath)
+    .filter((path) => path && path.points.length >= 2);
+  const dxfMarkerPoints = keepDxfMarkers
+    ? expandedEntities
+      .map(dxfEntityToMarker)
+      .filter((point) => point && point.layer !== "3")
+    : [];
+  const closedPaths = allPaths.filter((path) => path.closed && path.points.length >= 3);
+  const openPaths = allPaths.filter((path) => !path.closed);
+  const includeInternalLines = Boolean(dxfInternalLinesToggle?.checked);
+  const paths = closedPaths.length > 0
+    ? (includeInternalLines ? [...closedPaths, ...openPaths] : closedPaths)
+    : allPaths;
+  if (paths.length === 0) {
+    throw new Error("読み込めるDXF図形がありません。BLOCKS / INSERT / POLYLINE を確認してください。");
+  }
+
+  const allPoints = paths.flatMap((path) => path.points);
+  const minX = Math.min(...allPoints.map((point) => point.x));
+  const maxX = Math.max(...allPoints.map((point) => point.x));
+  const minY = Math.min(...allPoints.map((point) => point.y));
+  const maxY = Math.max(...allPoints.map((point) => point.y));
+  const margin = 80;
+  const origin = { x: margin - minX, y: margin + maxY };
+  const cmPerPixel = 0.1;
+  const pointMap = new Map();
+  const importedPoints = [];
+  const importedEdges = [];
+  const importedFaces = [];
+  const dxfGuidePaths = [];
+  const curveFit = Boolean(dxfCurveFitToggle?.checked);
+  const straightenCurves = Boolean(dxfStraightenCurvesToggle?.checked);
+  const simplifyCurves = curveFit || straightenCurves;
+  const showOriginalGuide = simplifyCurves && Boolean(dxfOriginalGuideToggle?.checked);
+  let sourcePointCount = 0;
+
+  function imagePointFromDxf(point) {
+    return { x: origin.x + point.x, y: origin.y - point.y, keyPoint: Boolean(point.keyPoint) };
+  }
+
+  const imageMarkerPoints = dxfMarkerPoints.map(imagePointFromDxf);
+
+  function addImportedImagePoint(imagePoint) {
+    const key = `${imagePoint.x.toFixed(4)},${imagePoint.y.toFixed(4)}`;
+    if (pointMap.has(key)) return pointMap.get(key);
+    const point = {
+      id: crypto.randomUUID(),
+      name: `P${importedPoints.length + 1}`,
+      x: imagePoint.x,
+      y: imagePoint.y,
+    };
+    importedPoints.push(point);
+    pointMap.set(key, point);
+    return point;
+  }
+
+  function addImportedPoint(dxfPoint) {
+    return addImportedImagePoint(imagePointFromDxf(dxfPoint));
+  }
+
+  paths.forEach((path) => {
+    let sourcePoints = [...path.points];
+    if (path.closed && sameDxfPoint(sourcePoints[0], sourcePoints[sourcePoints.length - 1])) sourcePoints = sourcePoints.slice(0, -1);
+    sourcePointCount += sourcePoints.length;
+
+    const imagePoints = sourcePoints.map(imagePointFromDxf);
+    const pathKeyPoints = imageMarkerPoints.filter((point) => (
+      dxfNearestPathPosition(point, imagePoints, path.closed).distance <= 2.5
+    ));
+    if (showOriginalGuide && imagePoints.length >= 2) {
+      dxfGuidePaths.push(path.closed ? [...imagePoints, imagePoints[0]] : imagePoints);
+    }
+
+    const importPath = buildDxfImportPath({ points: imagePoints, keyPoints: pathKeyPoints, closed: path.closed }, curveFit, straightenCurves);
+    const ids = importPath.points.map((point) => addImportedImagePoint(point).id);
+    const edgeCount = importPath.closed ? ids.length : ids.length - 1;
+    for (let index = 0; index < edgeCount; index += 1) {
+      const id = ids[index];
+      const nextId = ids[(index + 1) % ids.length];
+      if (!nextId || id === nextId) continue;
+      const control = importPath.controls[index];
+      importedEdges.push(control ? [id, nextId, control] : [id, nextId]);
+    }
+    if (importPath.closed && ids.length >= 3) {
+      importedFaces.push(ids);
+    }
+  });
+
+  state.imageName = fileName.replace(/\.[^.]+$/, "") || "imported-dxf";
+  state.image = createTransparentWorkspace((maxX - minX) + margin * 2, (maxY - minY) + margin * 2);
+  state.points = importedPoints;
+  state.edges = importedEdges;
+  state.faces = importedFaces;
+  state.currentPathLast = null;
+  state.currentPathIds = [];
+  state.selected.clear();
+  clearSelectedEdges();
+  state.selectedFaceIndex = null;
+  state.calibrationClicks = [];
+  state.cmPerPixel = cmPerPixel;
+  state.origin = origin;
+  state.yUp = true;
+  state.sourceOffset = { x: 0, y: 0 };
+  state.sourceScale = 1;
+  state.sketchStrokes = [];
+  state.sketchCircles = [];
+  state.dxfGuidePaths = showOriginalGuide ? dxfGuidePaths : [];
+  state.fitViewBefore = null;
+  state.lastPointClick = null;
+  state.imageOpacity = 0;
+  opacityInput.value = "0";
+  setShapeOpacity(DEFAULT_SHAPE_OPACITY);
+  els.unit.value = "mm";
+  els.knownLengthUnit.textContent = "mm";
+  arrowMoveUnit.textContent = "mm";
+  els.knownLength.value = "100";
+  els.pointName.value = nextImportedPointName(importedPoints);
+  clearUndoHistory();
+  setMode("select");
+  updateAll();
+  fitImage();
+  const curveFitNote = simplifyCurves && sourcePointCount > importedPoints.length
+    ? (state.language === "en"
+      ? ` ${curveFit ? "Curve fit" : "Line-simplified"} ${sourcePointCount} source points to ${importedPoints.length} edit points.`
+      : ` ${curveFit ? "カーブ化" : "直線化"}で元${sourcePointCount}点を編集点${importedPoints.length}点にしました。`)
+    : "";
+  const markerNote = dxfMarkerPoints.length > 0
+    ? (state.language === "en"
+      ? ` Kept ${dxfMarkerPoints.length} DXF point markers.`
+      : ` DXFポイント${dxfMarkerPoints.length}個を重要点候補にしました。`)
+    : "";
+  setStatus(state.language === "en"
+    ? `Imported DXF beta. ${importedPoints.length} points / ${importedEdges.length} lines / ${importedFaces.length} faces. Closed ${closedPaths.length}, internal ${includeInternalLines ? openPaths.length : 0}.${curveFitNote}${markerNote}`
+    : `DXF実験読込: ${importedPoints.length}点 / ${importedEdges.length}線 / ${importedFaces.length}面です。外形 ${closedPaths.length}、内部線 ${includeInternalLines ? openPaths.length : 0}。${curveFitNote}${markerNote}`);
 }
 
 function svgText() {
@@ -5533,7 +6458,7 @@ function pythonData(value) {
 
 function sampleEdgePatternPoints(from, to, edge, curveSteps = 16) {
   const controls = edgeCubicControls(edge || []);
-  if (!controls) return [pointToPattern(from)];
+  if (!controls || curveSteps <= 0) return [pointToPattern(from)];
 
   const samples = [];
   for (let step = 0; step < curveSteps; step += 1) {
@@ -5555,20 +6480,27 @@ function faceOutlinePatternPoints(face, curveSteps = 16) {
 }
 
 function mdCloPatternData() {
-  return state.faces.map((face, faceIndex) => {
-    const outline = faceOutlinePatternPoints(face, 16);
-    if (outline.length < 3) return null;
-    const minX = Math.min(...outline.map((point) => point.x));
-    const maxY = Math.max(...outline.map((point) => point.y));
+  const outlines = state.faces.map((face, faceIndex) => ({
+    faceIndex,
+    outline: faceOutlinePatternPoints(face, 0),
+  })).filter((item) => item.outline.length >= 3);
+  if (outlines.length === 0) return [];
+
+  const allPoints = outlines.flatMap((item) => item.outline);
+  const minX = Math.min(...allPoints.map((point) => point.x));
+  const minY = Math.min(...allPoints.map((point) => point.y));
+  const maxY = Math.max(...allPoints.map((point) => point.y));
+
+  return outlines.map(({ faceIndex, outline }) => {
     return {
       name: `Quack Trace Piece ${faceIndex + 1}`,
       points: outline.map((point) => [
         roundCoord((point.x - minX) * 10),
-        roundCoord((maxY - point.y) * 10),
+        roundCoord((state.yUp ? point.y - minY : maxY - point.y) * 10),
         0,
       ]),
     };
-  }).filter(Boolean);
+  });
 }
 
 function mdCloPyText() {
@@ -6147,6 +7079,14 @@ blankGridButton.addEventListener("click", createBlankGrid);
 opacityInput.addEventListener("input", () => setImageOpacity(opacityInput.value));
 shapeOpacityInput.addEventListener("input", () => setShapeOpacity(shapeOpacityInput.value));
 gridOpacityInput.addEventListener("input", () => setGridOpacity(gridOpacityInput.value));
+pointSizeInput.addEventListener("input", () => setPointSize(pointSizeInput.value));
+dxfCurveFitToggle.addEventListener("change", () => {
+  if (dxfCurveFitToggle.checked) dxfStraightenCurvesToggle.checked = false;
+});
+dxfStraightenCurvesToggle.addEventListener("change", () => {
+  if (dxfStraightenCurvesToggle.checked) dxfCurveFitToggle.checked = false;
+});
+dxfOriginalGuideToggle.addEventListener("change", draw);
 applyScaleButton.addEventListener("click", applyCalibrationScale);
 els.knownLength.addEventListener("input", updateAll);
 arrowMoveInput.addEventListener("input", () => {
@@ -6209,6 +7149,10 @@ importJsonButton.addEventListener("click", () => {
   importJsonInput.value = "";
   importJsonInput.click();
 });
+importDxfButton.addEventListener("click", () => {
+  importDxfInput.value = "";
+  importDxfInput.click();
+});
 importJsonInput.addEventListener("change", (event) => {
   const file = event.target.files?.[0];
   if (!file) return;
@@ -6221,6 +7165,20 @@ importJsonInput.addEventListener("change", (event) => {
     }
   };
   reader.onerror = () => setStatus("JSONファイルを読み込めませんでした。");
+  reader.readAsText(file);
+});
+importDxfInput.addEventListener("change", (event) => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      importDxfText(String(reader.result), file.name);
+    } catch (error) {
+      setStatus(`DXF実験読込に失敗しました: ${error.message}`);
+    }
+  };
+  reader.onerror = () => setStatus("DXFファイルを読み込めませんでした。");
   reader.readAsText(file);
 });
 els.downloadJson.addEventListener("click", () => {
