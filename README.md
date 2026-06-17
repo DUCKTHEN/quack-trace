@@ -8,6 +8,10 @@ https://duckthen.github.io/quack-trace/
 
 ## Screenshots / スクリーンショット
 
+Main editor with duck-shaped patterns:
+
+![Quack Trace editor with multiple duck-shaped pattern pieces](assets/screenshots/quack-trace-duck-patterns.png)
+
 Quack Trace editor:
 
 ![Quack Trace editor with a curved duck-shaped pattern](assets/screenshots/quack-trace-editor.png)
