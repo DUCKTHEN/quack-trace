@@ -11,6 +11,7 @@ const DEFAULT_IMAGE_OPACITY = 0.3;
 const DEFAULT_SHAPE_OPACITY = 0.7;
 const DEFAULT_GRID_OPACITY = 0.5;
 const DEFAULT_POINT_SIZE = 0.8;
+const MD_CLO_CURVE_STEPS = 8;
 
 const state = {
   image: null,
@@ -6482,7 +6483,7 @@ function faceOutlinePatternPoints(face, curveSteps = 16) {
 function mdCloPatternData() {
   const outlines = state.faces.map((face, faceIndex) => ({
     faceIndex,
-    outline: faceOutlinePatternPoints(face, 0),
+    outline: faceOutlinePatternPoints(face, MD_CLO_CURVE_STEPS),
   })).filter((item) => item.outline.length >= 3);
   if (outlines.length === 0) return [];
 
