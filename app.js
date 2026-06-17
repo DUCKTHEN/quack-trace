@@ -11,7 +11,7 @@ const DEFAULT_IMAGE_OPACITY = 0.3;
 const DEFAULT_SHAPE_OPACITY = 0.7;
 const DEFAULT_GRID_OPACITY = 0.5;
 const DEFAULT_POINT_SIZE = 0.8;
-const MD_CLO_CURVE_STEPS = 8;
+const MD_CLO_CURVE_STEPS = 24;
 
 const state = {
   image: null,
