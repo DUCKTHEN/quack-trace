@@ -2781,7 +2781,6 @@ function handleCanvasDoubleClick(event) {
 
 function handlePointerDown(event) {
   if (!state.image) return;
-  if (event.pointerType === "touch" && event.cancelable) event.preventDefault();
   const rect = canvas.getBoundingClientRect();
   const screen = { x: event.clientX - rect.left, y: event.clientY - rect.top };
 
@@ -3082,7 +3081,6 @@ function handlePointerDown(event) {
 
 function handlePointerMove(event) {
   if (!state.drag) return;
-  if (event.pointerType === "touch" && event.cancelable) event.preventDefault();
   const rect = canvas.getBoundingClientRect();
   const x = event.clientX - rect.left;
   const y = event.clientY - rect.top;
